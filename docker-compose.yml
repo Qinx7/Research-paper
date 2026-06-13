@@ -1,0 +1,33 @@
+# 文献驱动型研究生科研 Agent —— Docker Compose（MVP V0.1）
+
+services:
+  postgres:
+    image: ankane/pgvector:latest
+    container_name: research_agent_postgres
+    environment:
+      POSTGRES_DB: research_agent
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "5432:5432"
+    volumes:
+      - D:/docker-data/postgres:/var/lib/postgresql/data
+
+  redis:
+    image: redis:7
+    container_name: research_agent_redis
+    ports:
+      - "6379:6379"
+
+  minio:
+    image: minio/minio
+    container_name: research_agent_minio
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - D:/docker-data/minio:/data

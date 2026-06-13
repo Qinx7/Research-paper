@@ -1,0 +1,64 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+# 本地环境变量和密钥文件，禁止上传真实凭据
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.crt
+*.p12
+*.pfx
+id_rsa*
+id_ed25519*
+*.ppk
+
+# Python 虚拟环境
+.venv/
+venv/
+
+# Node / Next.js 依赖与构建缓存
+node_modules/
+.next/
+out/
+dist/
+build/
+*.tsbuildinfo
+
+# 日志和本地调试输出
+*.log
+*.err
+*.out
+backend/-w
+backend/cnki_debug.*
+backend/cnki_guide.html
+backend/cnki_search_result.html
+backend/tmp_*
+backend/_*.txt
+debug_*.py
+chat_test.png
+tmp_*.png
+temp_*.json
+test_output.pdf
+
+# 用户上传、生成物和临时文件
+storage/uploads/*
+storage/generated/*
+storage/temp/*
+!storage/uploads/.gitkeep
+!storage/generated/.gitkeep
+!storage/temp/.gitkeep
+backend/storage/uploads/*
+backend/storage/generated/*
+backend/storage/drafts/*
+backend/storage/temp/*
+!backend/storage/uploads/.gitkeep
+!backend/storage/generated/.gitkeep
+!backend/storage/drafts/.gitkeep
+!backend/storage/temp/.gitkeep
+
+# 系统文件
+.DS_Store
+Thumbs.db
