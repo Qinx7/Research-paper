@@ -18,6 +18,7 @@ from ..models.outcome import Outcome
 from ..models.project_design import ProjectDesign
 from ..models.research_direction import ResearchDirection
 from ..models.paper import Paper
+from ..models.user import User
 from ..schemas.draft import (
     DraftCreate, DraftUpdate, DraftOut, DraftOutline, PaperSection,
     GenerateOutlineRequest, GenerateChapterRequest,
@@ -29,7 +30,10 @@ from ..schemas.compliance import ComplianceResult, ComplianceConfirmRequest
 from ..agents.paper_writing_agent import paper_writing_agent
 from ..tasks.paper_task import generate_chapter_task
 from ..services.compliance_checker import check_draft
+from ..services.evidence_retrieval_service import build_evidence_context, retrieve_project_evidence
 from ..services.grounding_guard import validate_generated_chapter_grounding
+from ..services.auth_dependency import get_current_user
+from ..services.ownership import get_owned_draft, get_owned_project, query_owned_drafts
 from ..core.config import settings
 
 logger = logging.getLogger(__name__)
@@ -126,15 +130,29 @@ def _build_project_context(db: Session, project_id: UUID) -> str:
     return "\n".join(parts) if parts else "暂无项目背景信息"
 
 
-def _build_literature_context(db: Session, project_id: UUID) -> str:
+def _build_literature_context(
+    db: Session,
+    project_id: UUID,
+    evidence_items: list[dict] | None = None,
+) -> str:
     """构建文献上下文字符串"""
     papers = db.query(Paper).filter(Paper.project_id == project_id).limit(20).all()
-    if not papers:
+    if evidence_items is None:
+        evidence_items = retrieve_project_evidence(db, project_id, "", limit=12, min_confidence=70)
+    if not papers and not evidence_items:
         return ""
-    parts = ["已有文献："]
-    for p in papers:
-        authors = _format_authors(p.authors)
-        parts.append(f"- {authors}. {p.title}. {p.venue or ''}, {p.year or ''}")
+
+    parts = []
+    if papers:
+        parts.append("已有文献：")
+        for p in papers:
+            authors = _format_authors(p.authors)
+            parts.append(f"- {authors}. {p.title}. {p.venue or ''}, {p.year or ''}")
+
+    evidence_context = build_evidence_context(evidence_items)
+    if evidence_context:
+        parts.append("")
+        parts.append(evidence_context)
     return "\n".join(parts)
 
 
@@ -173,11 +191,16 @@ def _draft_to_out(draft: Draft) -> DraftOut:
 # ---- CRUD ----
 
 @router.post("/", response_model=DraftOut, status_code=201)
-def create_draft(payload: DraftCreate, db: Session = Depends(get_db)):
+def create_draft(
+    payload: DraftCreate,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
     """创建论文草稿"""
     try:
+        project = get_owned_project(payload.project_id, current_user, db)
         draft = Draft(
-            project_id=UUID(payload.project_id),
+            project_id=project.id,
             title=payload.title,
             content={},
             references=[],
@@ -193,30 +216,40 @@ def create_draft(payload: DraftCreate, db: Session = Depends(get_db)):
 
 
 @router.get("/", response_model=list[DraftOut])
-def list_drafts(project_id: str | None = None, db: Session = Depends(get_db)):
+def list_drafts(
+    project_id: str | None = None,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
     """列出论文草稿，可按项目过滤"""
-    q = db.query(Draft)
+    q = query_owned_drafts(db, current_user)
     if project_id:
-        q = q.filter(Draft.project_id == UUID(project_id))
+        project = get_owned_project(project_id, current_user, db)
+        q = q.filter(Draft.project_id == project.id)
     drafts = q.order_by(Draft.updated_at.desc()).all()
     return [_draft_to_out(d) for d in drafts]
 
 
 @router.get("/{draft_id}", response_model=DraftOut)
-def get_draft(draft_id: UUID, db: Session = Depends(get_db)):
+def get_draft(
+    draft_id: UUID,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
     """获取草稿完整内容"""
-    draft = db.query(Draft).filter(Draft.id == draft_id).first()
-    if not draft:
-        raise HTTPException(status_code=404, detail="草稿不存在")
+    draft = get_owned_draft(draft_id, current_user, db)
     return _draft_to_out(draft)
 
 
 @router.patch("/{draft_id}", response_model=DraftOut)
-def update_draft(draft_id: UUID, payload: DraftUpdate, db: Session = Depends(get_db)):
+def update_draft(
+    draft_id: UUID,
+    payload: DraftUpdate,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
     """更新草稿（保存用户编辑）"""
-    draft = db.query(Draft).filter(Draft.id == draft_id).first()
-    if not draft:
-        raise HTTPException(status_code=404, detail="草稿不存在")
+    draft = get_owned_draft(draft_id, current_user, db)
     try:
         for field, value in payload.model_dump(exclude_unset=True).items():
             if value is not None:
@@ -230,11 +263,13 @@ def update_draft(draft_id: UUID, payload: DraftUpdate, db: Session = Depends(get
 
 
 @router.delete("/{draft_id}", status_code=204)
-def delete_draft(draft_id: UUID, db: Session = Depends(get_db)):
+def delete_draft(
+    draft_id: UUID,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
     """删除草稿"""
-    draft = db.query(Draft).filter(Draft.id == draft_id).first()
-    if not draft:
-        raise HTTPException(status_code=404, detail="草稿不存在")
+    draft = get_owned_draft(draft_id, current_user, db)
     try:
         db.delete(draft)
         db.commit()
@@ -246,11 +281,13 @@ def delete_draft(draft_id: UUID, db: Session = Depends(get_db)):
 # ---- AI 生成 ----
 
 @router.post("/{draft_id}/outline", response_model=DraftOutline)
-def generate_outline(draft_id: UUID, db: Session = Depends(get_db)):
+def generate_outline(
+    draft_id: UUID,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
     """生成论文大纲"""
-    draft = db.query(Draft).filter(Draft.id == draft_id).first()
-    if not draft:
-        raise HTTPException(status_code=404, detail="草稿不存在")
+    draft = get_owned_draft(draft_id, current_user, db)
 
     project_context = _build_project_context(db, draft.project_id)
     outcomes_summary = _build_outcomes_summary(db, draft.project_id)
@@ -289,15 +326,14 @@ def generate_chapter(
     chapter_key: str,
     payload: GenerateChapterRequest | None = None,
     async_mode: bool = Query(False, alias="async", description="是否异步生成"),
+    current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     """生成单个章节内容"""
     if chapter_key not in PAPER_CHAPTER_KEYS:
         raise HTTPException(status_code=400, detail=f"无效的章节标识: {chapter_key}")
 
-    draft = db.query(Draft).filter(Draft.id == draft_id).first()
-    if not draft:
-        raise HTTPException(status_code=404, detail="草稿不存在")
+    draft = get_owned_draft(draft_id, current_user, db)
 
     # 异步模式
     if async_mode:
@@ -310,7 +346,8 @@ def generate_chapter(
 
     # 同步模式
     outcomes_summary = _build_outcomes_summary(db, draft.project_id)
-    literature_context = _build_literature_context(db, draft.project_id)
+    evidence_items = retrieve_project_evidence(db, draft.project_id, "", limit=12, min_confidence=70)
+    literature_context = _build_literature_context(db, draft.project_id, evidence_items)
     outcomes = db.query(Outcome).filter(Outcome.project_id == draft.project_id).all()
     papers = db.query(Paper).filter(Paper.project_id == draft.project_id).all()
 
@@ -327,6 +364,7 @@ def generate_chapter(
             result=result,
             outcomes=outcomes,
             papers=papers,
+            evidence_items=evidence_items,
         )
     except ValueError as e:
         raise HTTPException(status_code=422, detail=f"章节生成结果缺少可验证依据: {e}")
@@ -355,11 +393,13 @@ def generate_chapter(
 
 
 @router.post("/{draft_id}/abstract", response_model=AbstractResult)
-def generate_abstract(draft_id: UUID, db: Session = Depends(get_db)):
+def generate_abstract(
+    draft_id: UUID,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
     """根据全文生成中英文摘要"""
-    draft = db.query(Draft).filter(Draft.id == draft_id).first()
-    if not draft:
-        raise HTTPException(status_code=404, detail="草稿不存在")
+    draft = get_owned_draft(draft_id, current_user, db)
 
     result = paper_writing_agent.generate_abstract(draft.content or {})
     return AbstractResult(
@@ -371,11 +411,13 @@ def generate_abstract(draft_id: UUID, db: Session = Depends(get_db)):
 
 
 @router.post("/{draft_id}/suggest-refs", response_model=SuggestRefsResult)
-def suggest_references(draft_id: UUID, db: Session = Depends(get_db)):
+def suggest_references(
+    draft_id: UUID,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
     """推荐补充参考文献"""
-    draft = db.query(Draft).filter(Draft.id == draft_id).first()
-    if not draft:
-        raise HTTPException(status_code=404, detail="草稿不存在")
+    draft = get_owned_draft(draft_id, current_user, db)
 
     papers = db.query(Paper).filter(Paper.project_id == draft.project_id).all()
     existing_lit = [
@@ -402,12 +444,11 @@ def suggest_references(draft_id: UUID, db: Session = Depends(get_db)):
 def check_compliance(
     draft_id: UUID,
     enable_ai: bool = Query(False, description="是否启用 AI 深度语义检查"),
+    current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     """对论文草稿运行合规检查（规则检查始终执行，AI 检查可选）。"""
-    draft = db.query(Draft).filter(Draft.id == draft_id).first()
-    if not draft:
-        raise HTTPException(status_code=404, detail="草稿不存在")
+    draft = get_owned_draft(draft_id, current_user, db)
 
     outcomes = db.query(Outcome).filter(Outcome.project_id == draft.project_id).all()
     papers = db.query(Paper).filter(Paper.project_id == draft.project_id).all()
@@ -436,12 +477,11 @@ def check_compliance(
 def confirm_compliance(
     draft_id: UUID,
     payload: ComplianceConfirmRequest,
+    current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     """用户确认/忽略/修正某个合规 issue。"""
-    draft = db.query(Draft).filter(Draft.id == draft_id).first()
-    if not draft:
-        raise HTTPException(status_code=404, detail="草稿不存在")
+    draft = get_owned_draft(draft_id, current_user, db)
 
     content = dict(draft.content or {})
     compliance = content.get("_compliance", {})
@@ -476,11 +516,13 @@ def confirm_compliance(
 
 
 @router.get("/{draft_id}/compliance-status")
-def get_compliance_status(draft_id: UUID, db: Session = Depends(get_db)):
+def get_compliance_status(
+    draft_id: UUID,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
     """获取论文草稿的合规检查状态。"""
-    draft = db.query(Draft).filter(Draft.id == draft_id).first()
-    if not draft:
-        raise HTTPException(status_code=404, detail="草稿不存在")
+    draft = get_owned_draft(draft_id, current_user, db)
 
     content = draft.content or {}
     compliance = content.get("_compliance")
@@ -493,11 +535,13 @@ def get_compliance_status(draft_id: UUID, db: Session = Depends(get_db)):
 # ---- 导出 ----
 
 @router.get("/{draft_id}/preview")
-def preview_draft(draft_id: UUID, db: Session = Depends(get_db)):
+def preview_draft(
+    draft_id: UUID,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
     """拼接返回完整论文文本预览"""
-    draft = db.query(Draft).filter(Draft.id == draft_id).first()
-    if not draft:
-        raise HTTPException(status_code=404, detail="草稿不存在")
+    draft = get_owned_draft(draft_id, current_user, db)
 
     content = draft.content or {}
     parts = [f"# {draft.title}\n\n"]
@@ -514,13 +558,12 @@ def preview_draft(draft_id: UUID, db: Session = Depends(get_db)):
 @router.get("/{draft_id}/download")
 def download_draft(
     draft_id: UUID,
+    current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
     format: str = Query("docx", pattern="^(docx|pdf)$"),
 ):
     """导出论文草稿为 docx 或 pdf 文件（MinIO 优先，本地 fallback）"""
-    draft = db.query(Draft).filter(Draft.id == draft_id).first()
-    if not draft:
-        raise HTTPException(status_code=404, detail="草稿不存在")
+    draft = get_owned_draft(draft_id, current_user, db)
 
     if format == "pdf":
         content_type = "application/pdf"
@@ -575,11 +618,13 @@ def download_draft(
 # ---- 答辩 PPT 预览（从论文提取） ----
 
 @router.get("/{draft_id}/defense-outline", response_model=DefensePPTOutline)
-def get_defense_outline(draft_id: UUID, db: Session = Depends(get_db)):
+def get_defense_outline(
+    draft_id: UUID,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
     """从论文草稿生成答辩 PPT 大纲预览"""
-    draft = db.query(Draft).filter(Draft.id == draft_id).first()
-    if not draft:
-        raise HTTPException(status_code=404, detail="草稿不存在")
+    draft = get_owned_draft(draft_id, current_user, db)
 
     content = draft.content or {}
     has_real_data = False

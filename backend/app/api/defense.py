@@ -9,6 +9,7 @@ from uuid import UUID
 from ..core.database import get_db
 from ..models.draft import Draft
 from ..models.outcome import Outcome
+from ..models.user import User
 from ..schemas.defense_ppt import (
     GenerateDefensePPTRequest, GenerateDefensePPTResponse,
     DefensePPTOutline, DefenseScript, DefenseSlideInfo,
@@ -16,6 +17,13 @@ from ..schemas.defense_ppt import (
 from ..schemas.ppt import PPTStyleOut
 from ..agents.defense_ppt_agent import defense_ppt_agent
 from ..services.upload_service import get_object_stream
+from ..services.auth_dependency import get_current_user
+from ..services.generated_artifact_service import (
+    can_access_object_key,
+    register_generated_file,
+    register_task_artifact,
+)
+from ..services.ownership import get_owned_draft
 from ..tasks.defense_ppt_task import generate_defense_ppt_task
 
 router = APIRouter(prefix="/defense", tags=["defense"])
@@ -44,18 +52,19 @@ def list_styles():
 def generate_defense_ppt(
     payload: GenerateDefensePPTRequest,
     async_mode: bool = Query(False, alias="async", description="是否异步生成"),
+    current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     """根据论文草稿生成答辩 PPT"""
-    draft = db.query(Draft).filter(Draft.id == UUID(payload.draft_id)).first()
-    if not draft:
-        raise HTTPException(status_code=404, detail="草稿不存在")
+    draft = get_owned_draft(payload.draft_id, current_user, db)
 
     if async_mode:
         task = generate_defense_ppt_task.delay(
             draft_id=str(draft.id),
             template=payload.template,
+            user_id=str(current_user.id),
         )
+        register_task_artifact(db, current_user.id, task.id, "defense_ppt")
         return {"task_id": task.id, "status": "pending"}
 
     # 同步模式
@@ -68,6 +77,7 @@ def generate_defense_ppt(
             outcomes_summary=outcomes_summary,
             template=payload.template,
         )
+        register_generated_file(db, current_user.id, object_key, "defense_ppt")
         filename = os.path.basename(object_key)
 
         has_real_data = False
@@ -90,8 +100,15 @@ def generate_defense_ppt(
 
 
 @router.get("/ppt/download/{object_key:path}")
-def download_defense_ppt(object_key: str):
+def download_defense_ppt(
+    object_key: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
     """下载答辩 PPTX 文件（MinIO 优先，本地 fallback）"""
+    if not can_access_object_key(db, current_user.id, object_key):
+        raise HTTPException(status_code=404, detail="文件不存在")
+
     stream_result = get_object_stream(object_key)
     if stream_result is None:
         raise HTTPException(status_code=404, detail="文件不存在")
@@ -108,11 +125,13 @@ def download_defense_ppt(object_key: str):
 
 
 @router.get("/ppt/{draft_id}/outline", response_model=DefensePPTOutline)
-def get_defense_outline(draft_id: UUID, db: Session = Depends(get_db)):
+def get_defense_outline(
+    draft_id: UUID,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
     """获取答辩 PPT 大纲预览"""
-    draft = db.query(Draft).filter(Draft.id == draft_id).first()
-    if not draft:
-        raise HTTPException(status_code=404, detail="草稿不存在")
+    draft = get_owned_draft(draft_id, current_user, db)
 
     slides = defense_ppt_agent._build_slides(
         title=draft.title,
@@ -140,11 +159,13 @@ def get_defense_outline(draft_id: UUID, db: Session = Depends(get_db)):
 
 
 @router.get("/ppt/{draft_id}/script", response_model=DefenseScript)
-def get_defense_script(draft_id: UUID, db: Session = Depends(get_db)):
+def get_defense_script(
+    draft_id: UUID,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
     """生成答辩演讲稿"""
-    draft = db.query(Draft).filter(Draft.id == draft_id).first()
-    if not draft:
-        raise HTTPException(status_code=404, detail="草稿不存在")
+    draft = get_owned_draft(draft_id, current_user, db)
 
     slides = defense_ppt_agent._build_slides(
         title=draft.title,

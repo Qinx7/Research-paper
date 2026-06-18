@@ -1,20 +1,32 @@
 """研究方向与项目设计 API 路由"""
 from uuid import UUID
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy.orm import Session
 
 from ..agents.research_direction_agent import research_direction_agent
 from ..agents.project_design_agent import project_design_agent
-from ..core.database import SessionLocal
+from ..core.database import SessionLocal, get_db
 from ..models.research_direction import ResearchDirection
 from ..models.project_design import ProjectDesign
-from ..schemas.research_direction import GenerateDirectionsRequest, GenerateDesignRequest
+from ..models.user import User
+from ..schemas.research_direction import GenerateDirectionsRequest, GenerateDesignRequest, SaveDirectionRequest
+from ..services.auth_dependency import get_current_user
+from ..services.ownership import (
+    get_owned_project,
+    query_owned_project_designs,
+    query_owned_research_directions,
+)
 
 router = APIRouter(prefix="/research", tags=["research"])
 
 
 @router.post("/directions")
-def generate_directions(payload: GenerateDirectionsRequest):
+def generate_directions(
+    payload: GenerateDirectionsRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
     """
     根据文献分析结果生成 3-5 个可研究方向，并进行多维度评分。
     结果自动持久化到数据库。
@@ -26,7 +38,8 @@ def generate_directions(payload: GenerateDirectionsRequest):
     scores = research_direction_agent.score_directions(directions)
 
     # 持久化到数据库
-    saved_ids = _save_directions_to_db(directions, scores, payload.project_id)
+    project_id = get_owned_project(payload.project_id, current_user, db).id if payload.project_id else None
+    saved_ids = _save_directions_to_db(directions, scores, project_id)
 
     return {
         "requirement": payload.requirement,
@@ -37,8 +50,28 @@ def generate_directions(payload: GenerateDirectionsRequest):
     }
 
 
+@router.post("/directions/save")
+def save_direction(
+    payload: SaveDirectionRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """保存前端当前选中的单个研究方向，避免重新生成导致内容漂移。"""
+    if not payload.direction.get("title"):
+        raise HTTPException(status_code=400, detail="研究方向标题不能为空")
+    project = get_owned_project(payload.project_id, current_user, db)
+    saved_id = _save_single_direction_to_db(payload.direction, payload.score or {}, project.id)
+    if not saved_id:
+        raise HTTPException(status_code=500, detail="研究方向保存失败")
+    return {"saved_id": saved_id}
+
+
 @router.post("/design")
-def generate_design(payload: GenerateDesignRequest):
+def generate_design(
+    payload: GenerateDesignRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
     """
     根据选定的研究方向生成完整项目设计方案（18 项内容）。
     结果自动持久化到数据库。
@@ -49,7 +82,8 @@ def generate_design(payload: GenerateDesignRequest):
         requirement=payload.requirement or "",
     )
     # 持久化到数据库
-    saved_id = _save_design_to_db(design, payload.project_id, payload.direction_id)
+    project_id = get_owned_project(payload.project_id, current_user, db).id if payload.project_id else None
+    saved_id = _save_design_to_db(design, project_id, payload.direction_id)
 
     return {
         "requirement": payload.requirement,
@@ -59,13 +93,18 @@ def generate_design(payload: GenerateDesignRequest):
 
 
 @router.get("/directions")
-def list_directions(project_id: UUID | None = None, limit: int = 20):
+def list_directions(
+    project_id: UUID | None = None,
+    limit: int = 20,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
     """查询已生成的研究方向列表。DB 不可用时返回空列表。"""
     try:
-        db = SessionLocal()
-        q = db.query(ResearchDirection).order_by(ResearchDirection.created_at.desc())
+        q = query_owned_research_directions(db, current_user).order_by(ResearchDirection.created_at.desc())
         if project_id:
-            q = q.filter(ResearchDirection.project_id == project_id)
+            project = get_owned_project(project_id, current_user, db)
+            q = q.filter(ResearchDirection.project_id == project.id)
         rows = q.limit(limit).all()
         return [
             {
@@ -82,21 +121,21 @@ def list_directions(project_id: UUID | None = None, limit: int = 20):
         ]
     except Exception:
         return []
-    finally:
-        try:
-            db.close()
-        except Exception:
-            pass
 
 
 @router.get("/designs")
-def list_designs(project_id: UUID | None = None, limit: int = 20):
+def list_designs(
+    project_id: UUID | None = None,
+    limit: int = 20,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
     """查询已生成的项目设计方案列表。DB 不可用时返回空列表。"""
     try:
-        db = SessionLocal()
-        q = db.query(ProjectDesign).order_by(ProjectDesign.created_at.desc())
+        q = query_owned_project_designs(db, current_user).order_by(ProjectDesign.created_at.desc())
         if project_id:
-            q = q.filter(ProjectDesign.project_id == project_id)
+            project = get_owned_project(project_id, current_user, db)
+            q = q.filter(ProjectDesign.project_id == project.id)
         rows = q.limit(limit).all()
         return [
             {
@@ -111,11 +150,6 @@ def list_designs(project_id: UUID | None = None, limit: int = 20):
         ]
     except Exception:
         return []
-    finally:
-        try:
-            db.close()
-        except Exception:
-            pass
 
 
 # ========== 数据库持久化 ==========
@@ -159,6 +193,42 @@ def _save_directions_to_db(
         if db:
             db.close()
     return saved_ids
+
+
+def _save_single_direction_to_db(
+    direction: dict,
+    score: dict | None,
+    project_id: UUID,
+) -> str | None:
+    """将用户选中的单个研究方向保存到数据库，返回已保存的 ID。"""
+    db = None
+    try:
+        db = SessionLocal()
+        sc = (score or {}).get("scores", {})
+        saved = ResearchDirection(
+            project_id=project_id,
+            title=direction.get("title", ""),
+            background=direction.get("background"),
+            research_questions=_to_json_str(direction.get("research_questions", [])),
+            methods=_to_json_str(direction.get("methods", [])),
+            expected_outputs=_to_json_str(direction.get("expected_outputs", [])),
+            innovation=_to_json_str(direction.get("innovation", [])),
+            feasibility_score=_to_float(sc.get("feasibility")),
+            recommendation_score=_to_float(sc.get("overall")),
+            content={**direction, "scores": sc},
+        )
+        db.add(saved)
+        db.flush()
+        saved_id = str(saved.id)
+        db.commit()
+        return saved_id
+    except Exception:
+        if db:
+            db.rollback()
+        return None
+    finally:
+        if db:
+            db.close()
 
 
 def _save_design_to_db(

@@ -8,6 +8,7 @@ from ..core.database import SessionLocal
 from ..models.draft import Draft
 from ..models.outcome import Outcome
 from ..agents.defense_ppt_agent import defense_ppt_agent
+from ..services.generated_artifact_service import register_generated_file
 
 logger = logging.getLogger(__name__)
 
@@ -15,7 +16,7 @@ STORAGE_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "storage", "ge
 
 
 @celery_app.task(bind=True, max_retries=1, default_retry_delay=30)
-def generate_defense_ppt_task(self, draft_id: str, template: str = "academic_blue") -> dict:
+def generate_defense_ppt_task(self, draft_id: str, template: str = "academic_blue", user_id: str | None = None) -> dict:
     """异步生成答辩 PPTX 文件。
 
     返回：
@@ -45,6 +46,14 @@ def generate_defense_ppt_task(self, draft_id: str, template: str = "academic_blu
             template=template,
         )
         filename = os.path.basename(object_key)
+        if user_id:
+            register_generated_file(
+                db=db,
+                user_id=UUID(user_id),
+                object_key=object_key,
+                artifact_type="defense_ppt",
+                task_id=self.request.id,
+            )
 
         has_real_data = False
         for ch in (draft.content or {}).values():

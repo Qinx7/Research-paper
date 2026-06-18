@@ -5,7 +5,9 @@ import re
 import sys
 import urllib.parse
 
+from ..core.config import settings
 from .literature_search import PaperResult
+from .scrapling_cqvip_fallback import ScraplingCQVIPFallback
 from .shared_browser import get_shared_browser
 
 if sys.platform == "win32":
@@ -25,6 +27,7 @@ class CQVIPClient:
         self.timeout = timeout
         self.last_status = "idle"
         self.last_detail = ""
+        self.scrapling_fallback = ScraplingCQVIPFallback(timeout=settings.SCRAPLING_CQVIP_TIMEOUT)
 
     def search(
         self, query: str, year_from: int = 2020, year_to: int = 2026, limit: int = 20
@@ -32,6 +35,7 @@ class CQVIPClient:
         """搜索维普中文文献。异常时返回空列表，不影响其他源。"""
         results: list[PaperResult] = []
         context = None
+        should_try_fallback = False
         try:
             logger.info("CQVIP 开始搜索: query=%s, year_from=%s, year_to=%s, limit=%s", query, year_from, year_to, limit)
             browser = get_shared_browser(headless=self.headless)
@@ -59,8 +63,16 @@ class CQVIPClient:
                 logger.warning("CQVIP 验证码出现，跳过本次搜索")
                 self.last_status = "blocked"
                 self.last_detail = "captcha"
+                should_try_fallback = True
                 context.close()
-                return results
+                return self._maybe_apply_fallback(
+                    query=query,
+                    year_from=year_from,
+                    year_to=year_to,
+                    limit=limit,
+                    current_results=results,
+                    should_try_fallback=should_try_fallback,
+                )
 
             try:
                 page.wait_for_selector(".item", timeout=15000)
@@ -69,8 +81,16 @@ class CQVIPClient:
                 logger.warning("CQVIP 搜索结果未加载（.item 未出现）")
                 self.last_status = "no_results"
                 self.last_detail = f"query={query}"
+                should_try_fallback = True
                 context.close()
-                return results
+                return self._maybe_apply_fallback(
+                    query=query,
+                    year_from=year_from,
+                    year_to=year_to,
+                    limit=limit,
+                    current_results=results,
+                    should_try_fallback=should_try_fallback,
+                )
 
             raw = self._parse_results(page, limit)
             results = [r for r in raw if r and year_from <= (r.year or 0) <= year_to]
@@ -79,6 +99,7 @@ class CQVIPClient:
                 logger.warning("CQVIP 未命中文献: query=%s", query)
                 self.last_status = "no_results"
                 self.last_detail = f"query={query}"
+                should_try_fallback = True
             else:
                 self.last_status = "ok"
                 self.last_detail = f"count={len(results)} query={query}"
@@ -87,6 +108,7 @@ class CQVIPClient:
             logger.warning(f"CQVIP 搜索异常: query={query}, error={e}")
             self.last_status = "error"
             self.last_detail = str(e)
+            should_try_fallback = True
 
         finally:
             if context:
@@ -95,7 +117,54 @@ class CQVIPClient:
                 except Exception:
                     pass
 
-        return results
+        return self._maybe_apply_fallback(
+            query=query,
+            year_from=year_from,
+            year_to=year_to,
+            limit=limit,
+            current_results=results,
+            should_try_fallback=should_try_fallback,
+        )
+
+    def _maybe_apply_fallback(
+        self,
+        *,
+        query: str,
+        year_from: int,
+        year_to: int,
+        limit: int,
+        current_results: list[PaperResult],
+        should_try_fallback: bool,
+    ) -> list[PaperResult]:
+        if not settings.SCRAPLING_CQVIP_ENABLED:
+            return current_results
+        if len(current_results) >= limit:
+            return current_results
+        if current_results and not settings.SCRAPLING_CQVIP_FALLBACK_ON_EMPTY:
+            return current_results
+        if not should_try_fallback and current_results:
+            return current_results
+
+        logger.info(
+            "CQVIP 尝试 Scrapling 兜底: query=%s current=%s last_status=%s",
+            query,
+            len(current_results),
+            self.last_status,
+        )
+        fallback_results = self.scrapling_fallback.search(
+            query,
+            year_from=year_from,
+            year_to=year_to,
+            limit=limit,
+        )
+        if fallback_results:
+            self.last_status = "ok"
+            self.last_detail = f"count={len(fallback_results)} query={query} fallback=scrapling"
+            return fallback_results[:limit]
+        if self.scrapling_fallback.last_status in {"blocked", "error", "unavailable"}:
+            self.last_status = self.scrapling_fallback.last_status
+            self.last_detail = self.scrapling_fallback.last_detail
+        return current_results
 
     # ==================== URL ====================
 

@@ -16,10 +16,20 @@ from ..models.project_design import ProjectDesign
 from ..models.proposal import Proposal
 from ..models.draft import Draft
 from ..models.outcome import Outcome
+from ..models.user import User
 from ..schemas.chat import ChatSendRequest, ConversationOut, ConversationDetail
+from ..schemas.paper import LiteratureSearchRequest
 from ..agents.chat_agent import chat_stream, extract_keywords, build_search_plan
 from ..agents.literature_search_agent import literature_search_agent
 from ..services.embedding_service import search_similar_papers, batch_store_papers
+from ..services.evidence_retrieval_service import (
+    retrieve_project_evidence,
+    retrieve_project_paper_evidence,
+    tokenize_evidence_query,
+)
+from ..services.literature_search_task_service import create_search_task, mark_task_failed, mark_task_running, mark_task_success
+from ..services.auth_dependency import get_current_user
+from ..services.ownership import get_owned_project
 
 logger = logging.getLogger(__name__)
 
@@ -35,21 +45,14 @@ def _sse_event(event_type: str, data: dict | str) -> str:
     return f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
 
 
-def _tokenize_query(text: str) -> list[str]:
-    import re
-
-    tokens = [t.lower() for t in re.findall(r"[a-zA-Z]{3,}|[\u4e00-\u9fff]{2,8}", text)]
-    return [t for t in tokens if t.strip()]
-
-
 def _build_project_private_context(db: Session, project_id: str, query: str) -> tuple[str, list[dict]]:
     """从项目私有资料中提取与当前问题最相关的证据片段。"""
     project = db.query(Project).filter(Project.id == project_id).first()
     if not project:
         return "", []
 
-    query_tokens = set(_tokenize_query(query))
-    candidates: list[dict] = []
+    query_tokens = set(tokenize_evidence_query(query))
+    supporting_candidates: list[dict] = []
 
     def add_candidate(
         kind: str,
@@ -57,6 +60,7 @@ def _build_project_private_context(db: Session, project_id: str, query: str) -> 
         content: str,
         action_url: str | None = None,
         action_label: str | None = None,
+        extra: dict | None = None,
     ):
         text = (content or "").strip()
         if not text:
@@ -70,13 +74,14 @@ def _build_project_private_context(db: Session, project_id: str, query: str) -> 
                 score += 1
                 if title and token in title.lower():
                     score += 1
-        candidates.append({
+        supporting_candidates.append({
             "kind": kind,
             "title": title,
             "content_excerpt": text[:600],
             "score": score,
             "action_url": action_url,
             "action_label": action_label,
+            **(extra or {}),
         })
 
     base_summary = "\n".join(
@@ -159,15 +164,63 @@ def _build_project_private_context(db: Session, project_id: str, query: str) -> 
             action_label="打开成果" if outcome.file_path else "打开项目",
         )
 
-    candidates.sort(key=lambda item: item["score"], reverse=True)
-    top_items = candidates[:6]
+    note_items = retrieve_project_evidence(db, project.id, query, limit=6, min_confidence=0)
+    paper_items = retrieve_project_paper_evidence(db, project.id, query, limit=6)
+    if len(note_items) + len(paper_items) < 3:
+        fallback_papers = retrieve_project_paper_evidence(db, project.id, "", limit=3)
+        existing_titles = {item["title"] for item in paper_items}
+        for paper_item in fallback_papers:
+            if paper_item["title"] in existing_titles:
+                continue
+            paper_items.append(paper_item)
+            existing_titles.add(paper_item["title"])
+    supporting_candidates.sort(key=lambda item: item["score"], reverse=True)
+
+    evidence_candidates = sorted(
+        note_items + paper_items,
+        key=lambda item: (
+            1 if item["kind"] == "paper_note" else 0,
+            item["score"],
+            item.get("confidence") or 0,
+            item.get("citation_count") or 0,
+        ),
+        reverse=True,
+    )
+    top_items = evidence_candidates[:6]
+    if len(top_items) < 6:
+        top_items.extend(supporting_candidates[: 6 - len(top_items)])
     if not top_items:
         return "", []
 
     lines = [f"当前项目：{project.name}", "以下是与当前问题最相关的项目内资料：", ""]
     for idx, item in enumerate(top_items, 1):
-        lines.append(f"[P{idx}] {item['kind']} · {item['title']}")
-        lines.append(item["content_excerpt"])
+        if item["kind"] == "paper_note":
+            lines.append(f"[P{idx}] 内部证据卡片 · {item['title']}")
+            lines.append(f"类型：{item.get('note_type') or 'note'}")
+            if item.get("source_title"):
+                lines.append(f"来源文献：{item['source_title']}")
+            if item.get("evidence_text"):
+                lines.append(f"证据摘录：{item['evidence_text']}")
+            if item.get("confidence") is not None:
+                lines.append(f"可靠性：{item['confidence']}/100")
+            if item.get("score_reasons"):
+                lines.append(f"命中原因：{'、'.join(item['score_reasons'])}")
+        elif item["kind"] == "project_paper":
+            lines.append(f"[P{idx}] 项目文献 · {item['title']}")
+            if item.get("venue") or item.get("year"):
+                venue_line = " · ".join(
+                    part for part in [item.get("venue"), str(item.get("year")) if item.get("year") else None] if part
+                )
+                if venue_line:
+                    lines.append(f"载体信息：{venue_line}")
+            if item.get("citation_count") is not None:
+                lines.append(f"引用量：{item['citation_count']}")
+            if item.get("score_reasons"):
+                lines.append(f"命中原因：{'、'.join(item['score_reasons'])}")
+            lines.append(item["content_excerpt"])
+        else:
+            lines.append(f"[P{idx}] {item['kind']} · {item['title']}")
+            lines.append(item["content_excerpt"])
         lines.append("")
 
     return "\n".join(lines).strip(), top_items
@@ -219,7 +272,11 @@ def _build_scope_search_status(
 
 
 @router.post("/send")
-async def send_message(payload: ChatSendRequest, db: Session = Depends(get_db)):
+async def send_message(
+    payload: ChatSendRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
     """发送消息，以 SSE 流式返回回复。
 
     流程：
@@ -232,14 +289,15 @@ async def send_message(payload: ChatSendRequest, db: Session = Depends(get_db)):
     # --- 查找或创建对话 ---
     if payload.conversation_id:
         conversation = db.query(Conversation).filter(
-            Conversation.id == payload.conversation_id
+            Conversation.id == payload.conversation_id,
+            Conversation.user_id == current_user.id,
         ).first()
         if not conversation:
             raise HTTPException(status_code=404, detail="对话不存在")
     else:
         # 用消息前 30 字作为标题
         title = payload.message.strip()[:30] + ("..." if len(payload.message.strip()) > 30 else "")
-        conversation = Conversation(title=title)
+        conversation = Conversation(title=title, user_id=current_user.id)
         db.add(conversation)
         db.commit()
         db.refresh(conversation)
@@ -267,6 +325,7 @@ async def send_message(payload: ChatSendRequest, db: Session = Depends(get_db)):
     project_context = ""
     project_context_items: list[dict] = []
     source_statuses: dict = {}
+    search_task_id: str | None = None
 
     if payload.search_enabled:
         cn_kw, en_kw = extract_keywords(payload.message)
@@ -277,7 +336,10 @@ async def send_message(payload: ChatSendRequest, db: Session = Depends(get_db)):
 
     async def generate():
         try:
-            nonlocal search_papers, project_context, project_context_items, source_statuses
+            nonlocal search_papers, project_context, project_context_items, source_statuses, search_task_id
+            if payload.project_id:
+                get_owned_project(payload.project_id, current_user, db)
+
             # 发送检索状态
             if search_status:
                 yield _sse_event("status", search_status)
@@ -301,6 +363,25 @@ async def send_message(payload: ChatSendRequest, db: Session = Depends(get_db)):
                     en_keywords=en_kw,
                     library_scope=search_plan["library_scope"],
                 ):
+                    task = None
+                    try:
+                        task_payload = LiteratureSearchRequest(
+                            project_id=payload.project_id,
+                            keywords_cn=cn_kw,
+                            keywords_en=en_kw,
+                            year_from=2020,
+                            year_to=2026,
+                            mode=search_plan["research_mode"],
+                            library_scope=search_plan["library_scope"],
+                            min_citation_count=search_plan["min_citation_count"],
+                            prefer_high_impact=search_plan["prefer_high_impact"],
+                        )
+                        task = create_search_task(db, task_payload)
+                        search_task_id = str(task.id)
+                        mark_task_running(db, task.id)
+                    except Exception as e:
+                        logger.warning(f"创建聊天检索任务失败: {e}")
+                        db.rollback()
                     try:
                         search_result = await _run_literature_search_in_worker(
                             keywords_cn=cn_kw,
@@ -312,11 +393,21 @@ async def send_message(payload: ChatSendRequest, db: Session = Depends(get_db)):
                             library_scope=search_plan["library_scope"],
                             min_citation_count=search_plan["min_citation_count"],
                             prefer_high_impact=search_plan["prefer_high_impact"],
+                            open_access_only=False,
+                            quality_tags=[],
                         )
                         keyword_papers = search_result.get("papers", [])
                         source_statuses = search_result.get("source_statuses", {})
+                        if task:
+                            mark_task_success(db, task.id, search_result)
                     except Exception as e:
                         logger.warning(f"学术检索失败: {e}")
+                        if task:
+                            try:
+                                mark_task_failed(db, task.id, str(e))
+                            except Exception as task_error:
+                                logger.warning(f"保存聊天检索任务失败状态失败: {task_error}")
+                                db.rollback()
 
                 # 2. 向量语义检索（在已索引论文中搜索）
                 try:
@@ -383,6 +474,7 @@ async def send_message(payload: ChatSendRequest, db: Session = Depends(get_db)):
                     "external_papers": search_papers[:8],
                     "project_context_items": project_context_items[:6],
                     "source_statuses": source_statuses,
+                    "task_id": search_task_id,
                 })
 
             # 流式 LLM 回复
@@ -421,6 +513,7 @@ async def send_message(payload: ChatSendRequest, db: Session = Depends(get_db)):
                         "external_papers": search_papers[:8],
                         "project_context_items": project_context_items[:6],
                         "source_statuses": source_statuses,
+                        "task_id": search_task_id,
                     }
                     if (payload.search_enabled or payload.project_id or search_papers or project_context_items)
                     else None
@@ -464,10 +557,14 @@ async def send_message(payload: ChatSendRequest, db: Session = Depends(get_db)):
 
 
 @router.get("/conversations")
-def list_conversations(db: Session = Depends(get_db)):
+def list_conversations(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
     """获取对话列表，按更新时间倒序"""
     conversations = (
         db.query(Conversation)
+        .filter(Conversation.user_id == current_user.id)
         .order_by(Conversation.updated_at.desc())
         .limit(50)
         .all()
@@ -483,16 +580,28 @@ def list_conversations(db: Session = Depends(get_db)):
 
 
 @router.get("/conversations/{conv_id}")
-def get_conversation(conv_id: str, db: Session = Depends(get_db)):
+def get_conversation(
+    conv_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
     """获取对话详情（含所有消息）"""
-    conversation = db.query(Conversation).filter(Conversation.id == conv_id).first()
+    conversation = (
+        db.query(Conversation)
+        .filter(Conversation.id == conv_id, Conversation.user_id == current_user.id)
+        .first()
+    )
     if not conversation:
         raise HTTPException(status_code=404, detail="对话不存在")
     return ConversationDetail.model_validate(conversation)
 
 
 @router.delete("/conversations/{conv_id}")
-def delete_conversation(conv_id: str, db: Session = Depends(get_db)):
+def delete_conversation(
+    conv_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
     """删除对话"""
     from uuid import UUID
     try:
@@ -506,7 +615,11 @@ def delete_conversation(conv_id: str, db: Session = Depends(get_db)):
         pass
 
     try:
-        conversation = db.query(Conversation).filter(Conversation.id == conv_id).first()
+        conversation = (
+            db.query(Conversation)
+            .filter(Conversation.id == conv_id, Conversation.user_id == current_user.id)
+            .first()
+        )
         if not conversation:
             raise HTTPException(status_code=404, detail="对话不存在")
         # 先显式删除关联消息，避免 cascade 配置问题

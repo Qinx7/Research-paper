@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 from ..core.database import get_db
 from ..models.zotero_sync import ZoteroSync
 from ..models.paper import Paper
+from ..models.user import User
 from ..schemas.zotero import (
     ZoteroConnectRequest,
     ZoteroCollectionOut,
@@ -17,6 +18,8 @@ from ..schemas.zotero import (
     ZoteroConnectInfo,
 )
 from ..services.zotero_service import ZoteroClient, import_from_zotero
+from ..services.auth_dependency import get_current_user
+from ..services.ownership import get_owned_project
 
 logger = logging.getLogger(__name__)
 
@@ -24,8 +27,14 @@ router = APIRouter(prefix="/zotero", tags=["zotero"])
 
 
 @router.post("/connect", response_model=ZoteroConnectInfo)
-def connect_zotero(req: ZoteroConnectRequest, db: Session = Depends(get_db)):
+def connect_zotero(
+    req: ZoteroConnectRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
     """验证 Zotero API Key 并保存连接配置"""
+    project = get_owned_project(req.project_id, current_user, db)
+
     # 验证 API Key
     try:
         client = ZoteroClient(req.library_type, req.library_id, req.api_key)
@@ -37,7 +46,7 @@ def connect_zotero(req: ZoteroConnectRequest, db: Session = Depends(get_db)):
     existing = (
         db.query(ZoteroSync)
         .filter(
-            ZoteroSync.project_id == req.project_id,
+            ZoteroSync.project_id == project.id,
             ZoteroSync.library_type == req.library_type,
             ZoteroSync.zotero_user_id == str(info["user_id"]),
         )
@@ -50,7 +59,7 @@ def connect_zotero(req: ZoteroConnectRequest, db: Session = Depends(get_db)):
         db.refresh(existing)
     else:
         sync_record = ZoteroSync(
-            project_id=req.project_id,
+            project_id=project.id,
             zotero_user_id=str(info["user_id"]),
             zotero_api_key=req.api_key,
             library_type=req.library_type,
@@ -69,11 +78,16 @@ def connect_zotero(req: ZoteroConnectRequest, db: Session = Depends(get_db)):
     )
 
 
-def _get_zotero_sync(project_id: str, db: Session) -> tuple[ZoteroSync, ZoteroClient]:
+def _get_zotero_sync(
+    project_id: str,
+    current_user: User,
+    db: Session,
+) -> tuple[ZoteroSync, ZoteroClient]:
     """辅助：获取项目的 Zotero 同步记录和客户端"""
+    project = get_owned_project(project_id, current_user, db)
     sync_record = (
         db.query(ZoteroSync)
-        .filter(ZoteroSync.project_id == project_id)
+        .filter(ZoteroSync.project_id == project.id)
         .first()
     )
     if not sync_record:
@@ -88,9 +102,13 @@ def _get_zotero_sync(project_id: str, db: Session) -> tuple[ZoteroSync, ZoteroCl
 
 
 @router.get("/{project_id}/collections", response_model=list[ZoteroCollectionOut])
-def list_collections(project_id: str, db: Session = Depends(get_db)):
+def list_collections(
+    project_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
     """获取项目关联 Zotero 库的集合列表"""
-    _, client = _get_zotero_sync(project_id, db)
+    _, client = _get_zotero_sync(project_id, current_user, db)
     try:
         collections = client.get_collections()
         return [ZoteroCollectionOut(**c) for c in collections]
@@ -99,10 +117,14 @@ def list_collections(project_id: str, db: Session = Depends(get_db)):
 
 
 @router.post("/sync", response_model=ZoteroImportResult)
-def sync_zotero(req: ZoteroSyncRequest, db: Session = Depends(get_db)):
+def sync_zotero(
+    req: ZoteroSyncRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
     """按选中集合导入 Zotero 条目到项目文献库。
     若 collection_keys 为空，则导入全部顶层条目。"""
-    sync_record, client = _get_zotero_sync(req.project_id, db)
+    sync_record, client = _get_zotero_sync(req.project_id, current_user, db)
 
     # 更新同步状态
     sync_record.sync_status = "syncing"
@@ -133,9 +155,14 @@ def sync_zotero(req: ZoteroSyncRequest, db: Session = Depends(get_db)):
 
 
 @router.get("/{project_id}/status", response_model=ZoteroSyncOut | None)
-def get_zotero_status(project_id: str, db: Session = Depends(get_db)):
+def get_zotero_status(
+    project_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
     """获取项目最近一次 Zotero 同步状态"""
-    sync_record = db.query(ZoteroSync).filter(ZoteroSync.project_id == project_id).first()
+    project = get_owned_project(project_id, current_user, db)
+    sync_record = db.query(ZoteroSync).filter(ZoteroSync.project_id == project.id).first()
     if not sync_record:
         return None
     return ZoteroSyncOut(
@@ -152,9 +179,14 @@ def get_zotero_status(project_id: str, db: Session = Depends(get_db)):
 
 
 @router.delete("/{project_id}/disconnect")
-def disconnect_zotero(project_id: str, db: Session = Depends(get_db)):
+def disconnect_zotero(
+    project_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
     """断开 Zotero 连接（不删除已导入的文献）"""
-    sync_record = db.query(ZoteroSync).filter(ZoteroSync.project_id == project_id).first()
+    project = get_owned_project(project_id, current_user, db)
+    sync_record = db.query(ZoteroSync).filter(ZoteroSync.project_id == project.id).first()
     if not sync_record:
         raise HTTPException(status_code=404, detail="未找到 Zotero 连接配置")
     db.delete(sync_record)
@@ -163,11 +195,16 @@ def disconnect_zotero(project_id: str, db: Session = Depends(get_db)):
 
 
 @router.get("/{project_id}/papers")
-def list_zotero_papers(project_id: str, db: Session = Depends(get_db)):
+def list_zotero_papers(
+    project_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
     """列出从 Zotero 导入的文献"""
+    project = get_owned_project(project_id, current_user, db)
     papers = (
         db.query(Paper)
-        .filter(Paper.project_id == project_id, Paper.source == "zotero")
+        .filter(Paper.project_id == project.id, Paper.source == "zotero")
         .order_by(Paper.citation_count.desc().nullslast())
         .all()
     )

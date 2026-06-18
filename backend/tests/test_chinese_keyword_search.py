@@ -21,6 +21,14 @@ class ChineseKeywordSearchTests(unittest.TestCase):
         self.assertIn("教育", query_cn)
         self.assertIn("研究现状", query_cn)
 
+    def test_local_english_fallback_covers_bioinformatics_llm_query(self):
+        agent = LiteratureSearchAgent()
+
+        keywords = agent._fallback_en_keywords(["生物信息在大语言模型中的应用"])
+
+        self.assertIn("bioinformatics", keywords)
+        self.assertIn("large language models", keywords)
+
 
 if __name__ == "__main__":
     unittest.main()

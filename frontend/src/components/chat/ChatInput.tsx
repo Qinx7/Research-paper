@@ -37,6 +37,7 @@ export default function ChatInput({ onSend, projectId, projectOptions, disabled 
   const [libraryScope, setLibraryScope] = useState<LibraryScope>("all");
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(projectId);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const localSendingRef = useRef(false);
 
   useEffect(() => {
     const element = textareaRef.current;
@@ -50,9 +51,14 @@ export default function ChatInput({ onSend, projectId, projectOptions, disabled 
     setSelectedProjectId(projectId);
   }, [projectId]);
 
+  useEffect(() => {
+    if (!disabled) localSendingRef.current = false;
+  }, [disabled]);
+
   const handleSend = () => {
     const trimmed = input.trim();
-    if (!trimmed || disabled) return;
+    if (!trimmed || disabled || localSendingRef.current) return;
+    localSendingRef.current = true;
     onSend(trimmed, searchEnabled, researchMode, libraryScope, selectedProjectId);
     setInput("");
   };

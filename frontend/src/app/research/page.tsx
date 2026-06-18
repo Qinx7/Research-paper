@@ -148,9 +148,10 @@ export default function ResearchPage() {
         activeModule="research"
         currentId={null}
         onSelect={(_id: string, _messages: ChatMessage[]) => {}}
-        onNewChat={() => router.push("/chat")}
+        onNewChat={() => router.push("/")}
         onOpenSettings={() => setSettingsOpen(true)}
         refreshKey={0}
+        searchEntryMode="home"
       />
 
       <main className="grid min-w-0 flex-1 grid-cols-[300px_minmax(0,1fr)]">
@@ -221,18 +222,14 @@ export default function ResearchPage() {
           {projects.length === 0 ? (
             <PanelState
               text="当前还没有可分析的研究项目。"
-              actionLabel="进入完整研究流程"
-              onAction={() => router.push("/pipeline")}
-              secondaryLabel="返回文献搜索"
-              onSecondary={() => router.push("/chat")}
+              actionLabel="返回首页开始检索"
+              onAction={() => router.push("/")}
             />
           ) : !selectedDirection ? (
             <PanelState
               text="当前项目还没有可展示的研究方向。"
-              actionLabel="进入完整研究流程"
-              onAction={() => router.push("/pipeline")}
-              secondaryLabel="返回文献搜索"
-              onSecondary={() => router.push("/chat")}
+              actionLabel="返回首页开始检索"
+              onAction={() => router.push("/")}
             />
           ) : (
             <>

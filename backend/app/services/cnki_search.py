@@ -19,12 +19,14 @@ logger = logging.getLogger(__name__)
 
 CNKI_MOBILE_SEARCH = "https://wap.cnki.net/touch/web/Article/search"
 CNKI_GATE_API = "https://wap.cnki.net/gate/m052/web/api/article/search"
+CNKI_FAILURE_COOLDOWN_SECONDS = 120
 MOBILE_UA = (
     "Mozilla/5.0 (iPhone; CPU iPhone OS 15_0 like Mac OS X) "
     "AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148"
 )
 CAPTCHA_HINTS = ("验证码", "安全验证", "captcha", "verify", "blockpuzzle")
 BLOCK_HINTS = CAPTCHA_HINTS + ("访问异常", "请求异常", "操作频繁", "稍后再试")
+_cnki_failure_cooldown: dict[str, tuple[float, str, str]] = {}
 
 
 def _build_gate_payload(keyword: str, page_index: int = 1, page_size: int = 20) -> dict:
@@ -90,6 +92,13 @@ class CNKIClient:
         limit: int = 20,
     ) -> list[PaperResult]:
         """搜索 CNKI 中文文献。"""
+        cooldown_key = self._cooldown_key(query, year_from, year_to, limit)
+        cooldown = self._get_failure_cooldown(cooldown_key)
+        if cooldown:
+            self.last_status = cooldown["status"]
+            self.last_detail = cooldown["detail"]
+            return []
+
         results: list[PaperResult] = []
         seen_keys: set[str] = set()
         context = None
@@ -151,6 +160,7 @@ class CNKIClient:
 
                 if status == "blocked":
                     gate_error_status = "blocked"
+                    self.last_detail = str(gate_result.get("detail") or "")
                     logger.warning(
                         "CNKI Gate API 疑似被拦截: query=%s, page=%s, detail=%s",
                         query,
@@ -160,6 +170,7 @@ class CNKIClient:
                     break
                 if status == "error":
                     gate_error_status = "error"
+                    self.last_detail = str(gate_result.get("detail") or "")
                     logger.warning(
                         "CNKI Gate API 请求失败: query=%s, page=%s, detail=%s",
                         query,
@@ -169,6 +180,7 @@ class CNKIClient:
                     break
                 if status == "retryable_error":
                     gate_error_status = "retryable_error"
+                    self.last_detail = str(gate_result.get("detail") or "")
                     logger.warning(
                         "CNKI Gate API 重试后仍失败: query=%s, page=%s, detail=%s",
                         query,
@@ -253,7 +265,13 @@ class CNKIClient:
             )
             if not results:
                 logger.warning("CNKI 未命中文献: query=%s", query)
-                if self.scrapling_fallback.last_status in {"blocked", "error", "unavailable"}:
+                if gate_error_status == "retryable_error":
+                    self.last_status = "gateway_timeout"
+                    self.last_detail = self.last_detail or f"query={query}"
+                elif gate_error_status in {"blocked", "error"}:
+                    self.last_status = gate_error_status
+                    self.last_detail = self.last_detail or f"query={query}"
+                elif self.scrapling_fallback.last_status in {"blocked", "error", "unavailable"}:
                     self.last_status = self.scrapling_fallback.last_status
                     self.last_detail = self.scrapling_fallback.last_detail
                 else:
@@ -262,6 +280,10 @@ class CNKIClient:
             else:
                 self.last_status = "ok"
                 self.last_detail = f"count={len(results)} query={query}"
+                _cnki_failure_cooldown.pop(cooldown_key, None)
+
+            if self.last_status in {"gateway_timeout", "blocked", "error"}:
+                self._set_failure_cooldown(cooldown_key, self.last_status, self.last_detail)
 
         except Exception as exc:
             logger.warning("CNKI 搜索异常: query=%s, error=%s", query, exc)
@@ -276,6 +298,30 @@ class CNKIClient:
                     pass
 
         return results[:limit]
+
+    def _cooldown_key(self, query: str, year_from: int, year_to: int, limit: int) -> str:
+        return f"{query}|{year_from}|{year_to}|{limit}"
+
+    def _get_failure_cooldown(self, key: str) -> dict[str, str] | None:
+        entry = _cnki_failure_cooldown.get(key)
+        if not entry:
+            return None
+        expires_at, status, detail = entry
+        remaining = expires_at - time.time()
+        if remaining <= 0:
+            _cnki_failure_cooldown.pop(key, None)
+            return None
+        return {
+            "status": status,
+            "detail": f"cooldown={remaining:.1f}s {detail}",
+        }
+
+    def _set_failure_cooldown(self, key: str, status: str, detail: str) -> None:
+        _cnki_failure_cooldown[key] = (
+            time.time() + CNKI_FAILURE_COOLDOWN_SECONDS,
+            status,
+            detail,
+        )
 
     def _should_try_scrapling_fallback(
         self,

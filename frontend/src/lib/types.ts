@@ -43,29 +43,108 @@ export interface Paper {
   abstract: string | null;
   url: string | null;
   citation_count: number;
-  source: "openalex" | "semantic_scholar" | "cnki" | "cqvip";
+  source: "openalex" | "semantic_scholar" | "cnki" | "cqvip" | "crossref" | "arxiv";
   language?: "cn" | "en";
   relevance_score?: number;
   freshness_score?: number;
   impact_score?: number;
   quality_score?: number;
   final_score?: number;
+  is_open_access?: boolean | null;
   quality_flags?: string[];
+  quality_inference?: string[];
   why_selected?: string;
 }
 
+export interface LiteratureQualityFilters {
+  sources?: string[];
+  open_access_only?: boolean;
+  quality_tags?: string[];
+  min_citation_count?: number;
+}
+
+export interface SavedPaper {
+  id: string;
+  project_id: string | null;
+  title: string;
+  authors: string | null;
+  year: number | null;
+  venue: string | null;
+  doi: string | null;
+  abstract: string | null;
+  url: string | null;
+  citation_count: number;
+  relevance_score: number;
+  source: string | null;
+  created_at: string;
+}
+
+export interface PaperAnalysisResult {
+  research_question: string;
+  method: string;
+  sample_or_data: string;
+  key_findings: string;
+  limitations: string;
+  relevance_to_project: string;
+  evidence_level: string;
+  warnings: string[];
+}
+
+export type PaperNoteType = "summary" | "quote" | "method" | "finding" | "limitation" | "idea";
+
+export interface PaperNote {
+  id: string;
+  project_id?: string | null;
+  paper_id: string;
+  note_type: PaperNoteType;
+  title: string;
+  content: string;
+  evidence_text?: string | null;
+  evidence_level?: string | null;
+  confidence?: number | null;
+  tags?: string[];
+  meta?: Record<string, unknown>;
+  created_at?: string | null;
+  updated_at?: string | null;
+}
+
+export interface LiteratureMatrixRow {
+  title: string;
+  author_year: string;
+  source: string;
+  venue: string;
+  research_question: string;
+  method: string;
+  sample_or_data: string;
+  key_findings: string;
+  limitations: string;
+  relevance_to_project: string;
+  evidence_level: string;
+  warnings: string[];
+}
+
+export interface LiteratureMatrixResult {
+  total: number;
+  rows: LiteratureMatrixRow[];
+}
+
 export interface SearchLiteratureResponse {
+  task_id?: string | null;
   query: string;
   search_mode?: string;
   library_scope?: string;
   selected_sources?: string[];
   total_found: number;
   sources: {
+    pubmed?: number;
     openalex: number;
     semantic_scholar: number;
     cnki?: number;
     cqvip?: number;
+    crossref?: number;
+    arxiv?: number;
   };
+  source_statuses?: Record<string, SourceStatusInfo>;
   papers: Paper[];
 }
 
@@ -134,6 +213,10 @@ export interface GenerateDirectionsResponse {
   directions: ResearchDirection[];
   scores: DirectionScore[];
   saved_ids: string[];
+}
+
+export interface SaveDirectionResponse {
+  saved_id: string;
 }
 
 export interface PersistedResearchDirection {
@@ -271,6 +354,8 @@ export interface SearchResultItem {
   url: string | null;
   citation_count: number;
   source: string;
+  is_open_access?: boolean | null;
+  quality_flags?: string[];
 }
 
 export interface ProjectContextItem {
@@ -278,6 +363,18 @@ export interface ProjectContextItem {
   title: string;
   content_excerpt: string;
   score: number;
+  score_reasons?: string[];
+  note_type?: string | null;
+  evidence_text?: string | null;
+  evidence_level?: string | null;
+  confidence?: number | null;
+  source_title?: string | null;
+  citation_count?: number | null;
+  source?: string | null;
+  year?: number | null;
+  venue?: string | null;
+  authors?: string[];
+  tags?: string[];
   action_url?: string | null;
   action_label?: string | null;
 }
@@ -289,9 +386,26 @@ export interface SourceStatusInfo {
 }
 
 export interface SearchEvidenceBundle {
+  task_id?: string | null;
   external_papers: SearchResultItem[];
   project_context_items: ProjectContextItem[];
   source_statuses?: Record<string, SourceStatusInfo>;
+}
+
+export interface LiteratureSearchTask {
+  id: string;
+  project_id?: string | null;
+  query: string;
+  mode: string;
+  library_scope: string;
+  selected_sources?: string[] | null;
+  status: "pending" | "running" | "success" | "partial" | "failed" | string;
+  total_results: number;
+  source_statuses?: Record<string, SourceStatusInfo> | null;
+  result_snapshot?: SearchResultItem[] | null;
+  error_message?: string | null;
+  created_at?: string | null;
+  updated_at?: string | null;
 }
 
 export interface Conversation {
@@ -565,7 +679,7 @@ export interface TokenResponse {
 
 export type SSEEvent =
   | { type: "status"; status: string; message: string }
-  | { type: "sources"; external_papers: SearchResultItem[]; project_context_items: ProjectContextItem[]; source_statuses?: Record<string, SourceStatusInfo> }
+  | { type: "sources"; external_papers: SearchResultItem[]; project_context_items: ProjectContextItem[]; source_statuses?: Record<string, SourceStatusInfo>; task_id?: string | null }
   | { type: "token"; content: string }
   | { type: "done"; conversation_id: string; message_id: string | null }
   | { type: "error"; message: string };

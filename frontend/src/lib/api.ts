@@ -28,12 +28,25 @@ export function authHeaders(): Record<string, string> {
   return headers;
 }
 
+/** FormData / 文件下载等场景只附加认证，不强行指定 Content-Type。 */
+export function authOnlyHeaders(): Record<string, string> {
+  const token = getToken();
+  return token ? { Authorization: `Bearer ${token}` } : {};
+}
+
+function apiUrl(url: string): string {
+  return url.startsWith("http://") || url.startsWith("https://")
+    ? url
+    : `${API_BASE_URL}${url}`;
+}
+
 import type {
   Project,
   AnalyzeRequirementResponse,
   SearchLiteratureResponse,
   AnalyzeLiteratureResponse,
   GenerateDirectionsResponse,
+  SaveDirectionResponse,
   GenerateDesignResponse,
   GeneratePPTResponse,
   ListPPTsResponse,
@@ -41,7 +54,14 @@ import type {
   ProposalOut,
   LiteratureAnalysisInput,
   Paper,
+  PaperAnalysisResult,
+  PaperNote,
+  PaperNoteType,
+  LiteratureSearchTask,
+  LiteratureMatrixResult,
+  SavedPaper,
   ResearchDirection,
+  DirectionScore,
   ProjectDesign,
   PersistedProjectDesign,
   PersistedResearchDirection,
@@ -95,7 +115,7 @@ async function patch<T>(path: string, body: unknown): Promise<T> {
 
 /** 带认证的 GET 请求 */
 async function authGet<T>(url: string): Promise<T> {
-  const res = await fetch(url, { headers: authHeaders() });
+  const res = await fetch(apiUrl(url), { headers: authHeaders() });
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
     throw new Error(err.detail || `请求失败 (${res.status})`);
@@ -105,11 +125,29 @@ async function authGet<T>(url: string): Promise<T> {
 
 /** 带认证的 DELETE 请求 */
 async function authDelete(url: string): Promise<void> {
-  const res = await fetch(url, { method: "DELETE", headers: authHeaders() });
+  const res = await fetch(apiUrl(url), { method: "DELETE", headers: authHeaders() });
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
     throw new Error(err.detail || `请求失败 (${res.status})`);
   }
+}
+
+export async function downloadWithAuth(url: string, filename?: string): Promise<void> {
+  const res = await fetch(apiUrl(url), { headers: authOnlyHeaders() });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || `下载失败 (${res.status})`);
+  }
+
+  const blob = await res.blob();
+  const objectUrl = window.URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = objectUrl;
+  link.download = filename || "";
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  window.URL.revokeObjectURL(objectUrl);
 }
 
 /** 获取所有项目（仅当前用户） */
@@ -145,6 +183,7 @@ export function analyzeRequirement(requirement: string) {
 
 /** 阶段2：根据关键词检索文献 */
 export function searchLiterature(params: {
+  project_id?: string | null;
   keywords_cn: string[];
   keywords_en: string[];
   year_from?: number;
@@ -153,8 +192,12 @@ export function searchLiterature(params: {
   library_scope?: string;
   min_citation_count?: number;
   prefer_high_impact?: boolean;
+  sources?: string[];
+  open_access_only?: boolean;
+  quality_tags?: string[];
 }) {
   return post<SearchLiteratureResponse>("/api/literature/search", {
+    project_id: params.project_id ?? null,
     keywords_cn: params.keywords_cn,
     keywords_en: params.keywords_en,
     year_from: params.year_from ?? 2020,
@@ -163,7 +206,29 @@ export function searchLiterature(params: {
     library_scope: params.library_scope ?? "all",
     min_citation_count: params.min_citation_count ?? 0,
     prefer_high_impact: params.prefer_high_impact ?? false,
+    sources: params.sources,
+    open_access_only: params.open_access_only ?? false,
+    quality_tags: params.quality_tags ?? [],
   });
+}
+
+/** 查询学术检索任务记录 */
+export async function listLiteratureSearchTasks(params?: { project_id?: string; limit?: number }) {
+  const searchParams = new URLSearchParams();
+  if (params?.project_id) searchParams.set("project_id", params.project_id);
+  if (params?.limit) searchParams.set("limit", String(params.limit));
+  const qs = searchParams.toString();
+  return authGet<LiteratureSearchTask[]>(`${API_BASE_URL}/api/literature-search-tasks/${qs ? `?${qs}` : ""}`);
+}
+
+/** 获取单次学术检索任务详情 */
+export async function getLiteratureSearchTask(taskId: string) {
+  return authGet<LiteratureSearchTask>(`${API_BASE_URL}/api/literature-search-tasks/${taskId}`);
+}
+
+/** 删除单次学术检索任务记录 */
+export async function deleteLiteratureSearchTask(taskId: string) {
+  return authDelete(`${API_BASE_URL}/api/literature-search-tasks/${taskId}`);
 }
 
 /** 阶段3：分析文献 */
@@ -187,6 +252,19 @@ export function generateDirections(params: {
     literature_analysis: params.literatureAnalysis,
     requirement: params.requirement,
     project_id: params.projectId ?? null,
+  });
+}
+
+/** 保存当前已生成的单个研究方向到项目 */
+export function saveResearchDirection(params: {
+  direction: ResearchDirection;
+  score?: DirectionScore | null;
+  projectId: string;
+}) {
+  return post<SaveDirectionResponse>("/api/research/directions/save", {
+    direction: params.direction,
+    score: params.score ?? {},
+    project_id: params.projectId,
   });
 }
 
@@ -233,12 +311,108 @@ export function generatePPT(params: { design: ProjectDesign; template: string })
 
 /** 列出所有已生成的 PPT 文件 */
 export async function listPPTs() {
-  const res = await fetch(`${BASE_URL}/api/ppt/list`);
+  const res = await fetch(`${BASE_URL}/api/ppt/list`, { headers: authHeaders() });
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
     throw new Error(err.detail || `请求失败 (${res.status})`);
   }
   return res.json() as Promise<ListPPTsResponse>;
+}
+
+/** 将搜索结果保存到项目文献库 */
+export function saveProjectPaper(projectId: string, paper: Paper) {
+  return post<SavedPaper>(`/api/literature/projects/${projectId}/papers`, {
+    title: paper.title,
+    authors: paper.authors || [],
+    year: paper.year,
+    venue: paper.venue,
+    doi: paper.doi,
+    abstract: paper.abstract,
+    url: paper.url,
+    citation_count: paper.citation_count ?? 0,
+    source: paper.source,
+    relevance_score: paper.final_score ?? paper.relevance_score ?? 0,
+  });
+}
+
+/** 列出项目文献库 */
+export async function listProjectPapers(projectId: string) {
+  return authGet<SavedPaper[]>(`${API_BASE_URL}/api/literature/projects/${projectId}/papers`);
+}
+
+/** 获取项目文献库中的单篇文献详情 */
+export async function getProjectPaper(projectId: string, paperId: string) {
+  return authGet<SavedPaper>(`${API_BASE_URL}/api/literature/projects/${projectId}/papers/${paperId}`);
+}
+
+/** 生成项目文献矩阵 */
+export async function getProjectLiteratureMatrix(projectId: string) {
+  return authGet<LiteratureMatrixResult>(`${API_BASE_URL}/api/literature/projects/${projectId}/matrix`);
+}
+
+/** 对项目文献库中的单篇文献做结构化分析 */
+export function analyzeProjectPaper(projectId: string, paperId: string) {
+  return post<PaperAnalysisResult>(`/api/literature/projects/${projectId}/papers/${paperId}/analyze`, {});
+}
+
+/** 列出单篇文献的阅读笔记 */
+export async function listPaperNotes(projectId: string, paperId: string) {
+  const params = new URLSearchParams({ project_id: projectId, paper_id: paperId });
+  return authGet<PaperNote[]>(`${API_BASE_URL}/api/paper-notes/?${params.toString()}`);
+}
+
+/** 新增阅读笔记 */
+export function createPaperNote(params: {
+  project_id: string;
+  paper_id: string;
+  note_type: PaperNoteType;
+  title: string;
+  content: string;
+  evidence_text?: string | null;
+  evidence_level?: string | null;
+  confidence?: number | null;
+  tags?: string[];
+  meta?: Record<string, unknown>;
+}) {
+  return post<PaperNote>("/api/paper-notes/", params);
+}
+
+/** 更新阅读笔记 */
+export function updatePaperNote(noteId: string, params: Partial<{
+  note_type: PaperNoteType;
+  title: string;
+  content: string;
+  evidence_text: string | null;
+  evidence_level: string | null;
+  confidence: number | null;
+  tags: string[];
+  meta: Record<string, unknown>;
+}>) {
+  return patch<PaperNote>(`/api/paper-notes/${noteId}`, params);
+}
+
+/** 删除阅读笔记 */
+export async function deletePaperNote(noteId: string) {
+  const res = await fetch(`${API_BASE_URL}/api/paper-notes/${noteId}`, {
+    method: "DELETE",
+    headers: authHeaders(),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || `删除失败 (${res.status})`);
+  }
+}
+
+/** 从项目文献库移除文献 */
+export async function removeProjectPaper(projectId: string, paperId: string) {
+  const res = await fetch(`${BASE_URL}/api/literature/projects/${projectId}/papers/${paperId}`, {
+    method: "DELETE",
+    headers: authHeaders(),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || `请求失败 (${res.status})`);
+  }
 }
 
 /** 阶段7：生成开题报告 */
@@ -251,7 +425,7 @@ export function generateProposal(params: { project_id: string; design_id: string
 
 /** 获取单个开题报告详情 */
 export async function getProposal(proposalId: string) {
-  const res = await fetch(`${BASE_URL}/api/proposal/${proposalId}`);
+  const res = await fetch(`${BASE_URL}/api/proposal/${proposalId}`, { headers: authHeaders() });
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
     throw new Error(err.detail || `请求失败 (${res.status})`);
@@ -288,6 +462,7 @@ export async function uploadOutcome(params: {
 
   const res = await fetch(`${BASE_URL}/api/outcomes/upload`, {
     method: "POST",
+    headers: authOnlyHeaders(),
     body: formData,
   });
   if (!res.ok) {
@@ -303,7 +478,9 @@ export async function listOutcomes(params?: { project_id?: string; outcome_type?
   if (params?.project_id) searchParams.set("project_id", params.project_id);
   if (params?.outcome_type) searchParams.set("outcome_type", params.outcome_type);
   const qs = searchParams.toString();
-  const res = await fetch(`${BASE_URL}/api/outcomes/${qs ? "?" + qs : ""}`);
+  const res = await fetch(`${BASE_URL}/api/outcomes/${qs ? "?" + qs : ""}`, {
+    headers: authHeaders(),
+  });
   if (!res.ok) throw new Error("获取成果列表失败");
   return res.json() as Promise<Outcome[]>;
 }
@@ -317,20 +494,29 @@ export async function listOutcomeTypes() {
 
 /** 删除成果 */
 export async function deleteOutcome(outcomeId: string) {
-  const res = await fetch(`${BASE_URL}/api/outcomes/${outcomeId}`, { method: "DELETE" });
+  const res = await fetch(`${BASE_URL}/api/outcomes/${outcomeId}`, {
+    method: "DELETE",
+    headers: authHeaders(),
+  });
   if (!res.ok) throw new Error("删除成果失败");
 }
 
 /** AI 汇总项目成果 */
 export async function summarizeOutcomes(projectId: string) {
-  const res = await fetch(`${BASE_URL}/api/outcomes/${projectId}/summarize`, { method: "POST" });
+  const res = await fetch(`${BASE_URL}/api/outcomes/${projectId}/summarize`, {
+    method: "POST",
+    headers: authHeaders(),
+  });
   if (!res.ok) throw new Error("汇总失败");
   return res.json() as Promise<OutcomeSummary>;
 }
 
 /** 检查论文就绪状态 */
 export async function checkReadiness(projectId: string) {
-  const res = await fetch(`${BASE_URL}/api/outcomes/${projectId}/check-readiness`, { method: "POST" });
+  const res = await fetch(`${BASE_URL}/api/outcomes/${projectId}/check-readiness`, {
+    method: "POST",
+    headers: authHeaders(),
+  });
   if (!res.ok) throw new Error("检查失败");
   return res.json() as Promise<ReadinessCheck>;
 }
@@ -345,14 +531,14 @@ export function createDraft(params: { project_id: string; title: string }) {
 /** 获取论文草稿列表 */
 export async function listDrafts(projectId?: string) {
   const qs = projectId ? `?project_id=${projectId}` : "";
-  const res = await fetch(`${BASE_URL}/api/drafts/${qs}`);
+  const res = await fetch(`${BASE_URL}/api/drafts/${qs}`, { headers: authHeaders() });
   if (!res.ok) throw new Error("获取草稿列表失败");
   return res.json() as Promise<Draft[]>;
 }
 
 /** 获取单个草稿 */
 export async function getDraft(draftId: string) {
-  const res = await fetch(`${BASE_URL}/api/drafts/${draftId}`);
+  const res = await fetch(`${BASE_URL}/api/drafts/${draftId}`, { headers: authHeaders() });
   if (!res.ok) throw new Error("获取草稿失败");
   return res.json() as Promise<Draft>;
 }
@@ -364,7 +550,10 @@ export function updateDraft(draftId: string, params: Record<string, unknown>) {
 
 /** 删除草稿 */
 export async function deleteDraft(draftId: string) {
-  const res = await fetch(`${BASE_URL}/api/drafts/${draftId}`, { method: "DELETE" });
+  const res = await fetch(`${BASE_URL}/api/drafts/${draftId}`, {
+    method: "DELETE",
+    headers: authHeaders(),
+  });
   if (!res.ok) throw new Error("删除草稿失败");
 }
 
@@ -384,7 +573,7 @@ export function generateChapter(draftId: string, chapterKey: string) {
 export async function generateChapterAsync(draftId: string, chapterKey: string) {
   const res = await fetch(`${BASE_URL}/api/drafts/${draftId}/chapters/${chapterKey}?async=true`, {
     method: "POST",
-    headers: { "Content-Type": "application/json; charset=utf-8" },
+    headers: authHeaders(),
     body: JSON.stringify({ chapter_key: chapterKey }),
   });
   if (!res.ok) {
@@ -401,7 +590,7 @@ export function generateAbstract(draftId: string) {
 
 /** 获取论文预览 */
 export async function getDraftPreview(draftId: string) {
-  const res = await fetch(`${BASE_URL}/api/drafts/${draftId}/preview`);
+  const res = await fetch(`${BASE_URL}/api/drafts/${draftId}/preview`, { headers: authHeaders() });
   if (!res.ok) throw new Error("获取预览失败");
   return res.json() as Promise<{ title: string; full_text: string; version: number }>;
 }
@@ -417,6 +606,7 @@ export function getDraftDownloadUrl(draftId: string, format: "docx" | "pdf" = "d
 export async function checkCompliance(draftId: string, enableAi = false) {
   const res = await fetch(`${BASE_URL}/api/drafts/${draftId}/check-compliance?enable_ai=${enableAi}`, {
     method: "POST",
+    headers: authHeaders(),
   });
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
@@ -434,7 +624,7 @@ export async function confirmComplianceIssue(
 ) {
   const res = await fetch(`${BASE_URL}/api/drafts/${draftId}/confirm-compliance`, {
     method: "POST",
-    headers: { "Content-Type": "application/json; charset=utf-8" },
+    headers: authHeaders(),
     body: JSON.stringify({ chapter_key: chapterKey, issue_index: issueIndex, action }),
   });
   if (!res.ok) {
@@ -446,7 +636,9 @@ export async function confirmComplianceIssue(
 
 /** 获取合规检查状态 */
 export async function getComplianceStatus(draftId: string) {
-  const res = await fetch(`${BASE_URL}/api/drafts/${draftId}/compliance-status`);
+  const res = await fetch(`${BASE_URL}/api/drafts/${draftId}/compliance-status`, {
+    headers: authHeaders(),
+  });
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
     throw new Error(err.detail || `获取合规状态失败 (${res.status})`);
@@ -458,7 +650,9 @@ export async function getComplianceStatus(draftId: string) {
 
 /** 获取项目的文献知识图谱数据 */
 export async function getKnowledgeGraph(projectId: string) {
-  const res = await fetch(`${BASE_URL}/api/literature/${projectId}/knowledge-graph`);
+  const res = await fetch(`${BASE_URL}/api/literature/${projectId}/knowledge-graph`, {
+    headers: authHeaders(),
+  });
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
     throw new Error(err.detail || `图谱加载失败 (${res.status})`);
@@ -484,7 +678,7 @@ export function generateDefensePPT(params: { draft_id: string; template: string 
 export async function generateDefensePPTAsync(params: { draft_id: string; template: string }) {
   const res = await fetch(`${BASE_URL}/api/defense/ppt?async=true`, {
     method: "POST",
-    headers: { "Content-Type": "application/json; charset=utf-8" },
+    headers: authHeaders(),
     body: JSON.stringify(params),
   });
   if (!res.ok) {
@@ -496,14 +690,18 @@ export async function generateDefensePPTAsync(params: { draft_id: string; templa
 
 /** 获取答辩 PPT 大纲 */
 export async function getDefenseOutline(draftId: string) {
-  const res = await fetch(`${BASE_URL}/api/defense/ppt/${draftId}/outline`);
+  const res = await fetch(`${BASE_URL}/api/defense/ppt/${draftId}/outline`, {
+    headers: authHeaders(),
+  });
   if (!res.ok) throw new Error("获取大纲失败");
   return res.json() as Promise<DefensePPTOutline>;
 }
 
 /** 获取答辩演讲稿 */
 export async function getDefenseScript(draftId: string) {
-  const res = await fetch(`${BASE_URL}/api/defense/ppt/${draftId}/script`);
+  const res = await fetch(`${BASE_URL}/api/defense/ppt/${draftId}/script`, {
+    headers: authHeaders(),
+  });
   if (!res.ok) throw new Error("获取演讲稿失败");
   return res.json() as Promise<DefenseScript>;
 }
@@ -527,7 +725,7 @@ export interface TaskStatus {
 export async function generatePPTAsync(params: { design: ProjectDesign; template: string }) {
   const res = await fetch(`${BASE_URL}/api/ppt/proposal?async=true`, {
     method: "POST",
-    headers: { "Content-Type": "application/json; charset=utf-8" },
+    headers: authHeaders(),
     body: JSON.stringify(params),
   });
   if (!res.ok) {
@@ -541,7 +739,7 @@ export async function generatePPTAsync(params: { design: ProjectDesign; template
 export async function generateProposalAsync(params: { project_id: string; design_id: string }) {
   const res = await fetch(`${BASE_URL}/api/proposal/generate?async=true`, {
     method: "POST",
-    headers: { "Content-Type": "application/json; charset=utf-8" },
+    headers: authHeaders(),
     body: JSON.stringify(params),
   });
   if (!res.ok) {
@@ -553,7 +751,7 @@ export async function generateProposalAsync(params: { project_id: string; design
 
 /** 轮询任务状态 */
 export async function pollTask(taskId: string): Promise<TaskStatus> {
-  const res = await fetch(`${BASE_URL}/api/tasks/${taskId}`);
+  const res = await fetch(`${BASE_URL}/api/tasks/${taskId}`, { headers: authHeaders() });
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
     throw new Error(err.detail || `请求失败 (${res.status})`);
@@ -598,7 +796,9 @@ export function connectZotero(params: {
 
 /** 获取 Zotero 集合列表 */
 export async function getZoteroCollections(projectId: string) {
-  const res = await fetch(`${BASE_URL}/api/zotero/${projectId}/collections`);
+  const res = await fetch(`${BASE_URL}/api/zotero/${projectId}/collections`, {
+    headers: authHeaders(),
+  });
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
     throw new Error(err.detail || "获取集合列表失败");
@@ -616,14 +816,19 @@ export function syncZotero(params: {
 
 /** 获取 Zotero 同步状态 */
 export async function getZoteroStatus(projectId: string) {
-  const res = await fetch(`${BASE_URL}/api/zotero/${projectId}/status`);
+  const res = await fetch(`${BASE_URL}/api/zotero/${projectId}/status`, {
+    headers: authHeaders(),
+  });
   if (!res.ok) return null;
   return res.json() as Promise<import("./types").ZoteroSyncInfo | null>;
 }
 
 /** 断开 Zotero 连接 */
 export async function disconnectZotero(projectId: string) {
-  const res = await fetch(`${BASE_URL}/api/zotero/${projectId}/disconnect`, { method: "DELETE" });
+  const res = await fetch(`${BASE_URL}/api/zotero/${projectId}/disconnect`, {
+    method: "DELETE",
+    headers: authHeaders(),
+  });
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
     throw new Error(err.detail || "断开连接失败");

@@ -19,15 +19,20 @@ _source_cooldown_until: dict[str, float] = {}
 _SOURCE_MIN_INTERVAL_SECONDS = {
     "openalex": 1.0,
     "semantic_scholar": 1.0,
+    "crossref": 0.5,
+    "arxiv": 3.0,
 }
 _SOURCE_DEFAULT_COOLDOWN_SECONDS = {
     "openalex": 60.0,
     "semantic_scholar": 120.0,
+    "crossref": 60.0,
+    "arxiv": 300.0,
 }
 
 
-def _cache_key(query: str, year_from: int, year_to: int, limit: int) -> str:
-    return f"{query}|{year_from}|{year_to}|{limit}"
+def _cache_key(source: str, query: str, year_from: int, year_to: int, limit: int) -> str:
+    """按文献源隔离缓存，避免不同 API 的同名查询互相污染。"""
+    return f"{source}|{query}|{year_from}|{year_to}|{limit}"
 
 
 def _cache_get(key: str) -> list | None:
@@ -124,6 +129,7 @@ class PaperResult:
     url: str | None = None
     citation_count: int = 0
     source: str = ""  # "openalex" 或 "semantic_scholar"
+    is_open_access: bool | None = None
 
 
 class OpenAlexClient:
@@ -156,7 +162,7 @@ class OpenAlexClient:
         return []
 
     def _search_once(self, query: str, year_from: int = 2020, year_to: int = 2026, limit: int = 20) -> list[PaperResult]:
-        cache_key = _cache_key(query, year_from, year_to, limit)
+        cache_key = _cache_key("openalex", query, year_from, year_to, limit)
         cached = _cache_get(cache_key)
         if cached is not None:
             return list(cached)
@@ -248,6 +254,7 @@ class OpenAlexClient:
             url=work.get("primary_location", {}).get("landing_page_url"),
             citation_count=work.get("cited_by_count", 0),
             source="openalex",
+            is_open_access=bool(work.get("open_access", {}).get("is_oa")),
         )
 
 
@@ -281,7 +288,7 @@ class SemanticScholarClient:
         return []
 
     def _search_once(self, query: str, year_from: int, year_to: int, limit: int) -> list[PaperResult]:
-        cache_key = _cache_key(query, year_from, year_to, limit)
+        cache_key = _cache_key("semantic_scholar", query, year_from, year_to, limit)
         cached = _cache_get(cache_key)
         if cached is not None:
             return list(cached)
@@ -373,6 +380,7 @@ class SemanticScholarClient:
             url=paper.get("url"),
             citation_count=paper.get("citationCount", 0),
             source="semantic_scholar",
+            is_open_access=None,
         )
 
 

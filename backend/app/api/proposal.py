@@ -12,6 +12,7 @@ from ..core.database import get_db
 from ..models.proposal import Proposal
 from ..models.project_design import ProjectDesign
 from ..models.research_direction import ResearchDirection
+from ..models.user import User
 from ..schemas.proposal import (
     ProposalGenerateRequest,
     ProposalOut,
@@ -22,6 +23,9 @@ from ..schemas.proposal import (
 from ..agents.proposal_agent import proposal_agent
 from ..tasks.proposal_task import generate_proposal_task
 from ..services.grounding_guard import collect_allowed_references_from_design
+from ..services.auth_dependency import get_current_user
+from ..services.generated_artifact_service import register_task_artifact
+from ..services.ownership import get_owned_design, get_owned_project, get_owned_proposal
 
 logger = logging.getLogger(__name__)
 
@@ -178,6 +182,7 @@ def _proposal_to_out(proposal: Proposal) -> ProposalOut:
 @router.post("/generate")
 def generate_proposal(
     payload: ProposalGenerateRequest,
+    current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
     async_mode: bool = Query(False, alias="async", description="是否异步生成（Celery 任务）"),
 ):
@@ -185,13 +190,13 @@ def generate_proposal(
 
     设置 ?async=true 则立即返回 task_id，客户端可轮询 GET /api/tasks/{task_id} 获取结果。
     """
+    project = get_owned_project(payload.project_id, current_user, db)
+    design = get_owned_design(payload.design_id, current_user, db)
+    if design.project_id != project.id:
+        raise HTTPException(status_code=404, detail="项目设计不存在")
+
     # --- 异步模式：分发到 Celery ---
     if async_mode:
-        # 加载项目设计（同步部分，必须在这里完成）
-        design = db.query(ProjectDesign).filter(ProjectDesign.id == payload.design_id).first()
-        if not design:
-            raise HTTPException(status_code=404, detail="项目设计不存在")
-
         direction = None
         if design.direction_id:
             rd = db.query(ResearchDirection).filter(ResearchDirection.id == design.direction_id).first()
@@ -225,14 +230,10 @@ def generate_proposal(
             research_direction=direction,
             literature_context=literature_context,
         )
+        register_task_artifact(db, current_user.id, task.id, "proposal")
         return {"task_id": task.id, "status": "pending"}
 
     # --- 同步模式 ---
-    # 加载项目设计
-    design = db.query(ProjectDesign).filter(ProjectDesign.id == payload.design_id).first()
-    if not design:
-        raise HTTPException(status_code=404, detail="项目设计不存在")
-
     # 加载研究方向
     direction = None
     if design.direction_id:
@@ -308,24 +309,25 @@ def generate_proposal(
 
 
 @router.get("/{proposal_id}", response_model=ProposalOut)
-def get_proposal(proposal_id: str, db: Session = Depends(get_db)):
+def get_proposal(
+    proposal_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
     """获取开题报告详情"""
-    proposal = db.query(Proposal).filter(Proposal.id == proposal_id).first()
-    if not proposal:
-        raise HTTPException(status_code=404, detail="开题报告不存在")
+    proposal = get_owned_proposal(proposal_id, current_user, db)
     return _proposal_to_out(proposal)
 
 
 @router.get("/{proposal_id}/download")
 def download_proposal(
     proposal_id: str,
+    current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
     format: str = Query("docx", pattern="^(docx|pdf)$"),
 ):
     """下载开题报告 docx 或 pdf 文件（MinIO 优先，本地 fallback）"""
-    proposal = db.query(Proposal).filter(Proposal.id == proposal_id).first()
-    if not proposal:
-        raise HTTPException(status_code=404, detail="开题报告不存在")
+    proposal = get_owned_proposal(proposal_id, current_user, db)
 
     if format == "pdf":
         # PDF 实时生成

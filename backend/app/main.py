@@ -22,6 +22,8 @@ from .api.drafts import router as drafts_router
 from .api.defense import router as defense_router
 from .api.zotero import router as zotero_router
 from .api.auth import router as auth_router
+from .api.paper_notes import router as paper_notes_router
+from .api.literature_search_tasks import router as literature_search_tasks_router
 from .core.database import engine, Base, SessionLocal
 
 # 启动时自动建表（数据库不可用时不阻塞启动）
@@ -34,6 +36,8 @@ except Exception:
 try:
     db = SessionLocal()
     from .services.embedding_service import ensure_document_vectors_table
+    from .services.schema_compat import ensure_conversation_user_column
+    ensure_conversation_user_column(db)
     ensure_document_vectors_table(db)
     db.close()
 except Exception:
@@ -66,6 +70,8 @@ app.include_router(drafts_router, prefix="/api")
 app.include_router(defense_router, prefix="/api")
 app.include_router(zotero_router, prefix="/api")
 app.include_router(auth_router, prefix="/api")
+app.include_router(paper_notes_router, prefix="/api")
+app.include_router(literature_search_tasks_router, prefix="/api")
 
 
 @app.get("/health")

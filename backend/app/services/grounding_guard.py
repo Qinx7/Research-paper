@@ -123,17 +123,39 @@ def validate_generated_chapter_grounding(
     result: dict,
     outcomes: list,
     papers: list,
+    evidence_items: list[dict] | None = None,
 ) -> dict:
     """校验论文章节返回的 citations/data_based 是否具备可验证依据。"""
     allowed_labels: dict[str, str] = {}
+    support_texts: list[str] = []
     for outcome in outcomes or []:
         name = str(getattr(outcome, "name", "") or "").strip()
         if name:
             allowed_labels[_normalize_text(name)] = name
+            support_texts.append(name)
+        description = str(getattr(outcome, "description", "") or "").strip()
+        if description:
+            support_texts.append(description)
     for paper in papers or []:
         title = str(getattr(paper, "title", "") or "").strip()
         if title:
             allowed_labels[_normalize_text(title)] = title
+            support_texts.append(title)
+        abstract = str(getattr(paper, "abstract", "") or "").strip()
+        if abstract:
+            support_texts.append(abstract)
+    for item in evidence_items or []:
+        title = str(item.get("title", "") or "").strip()
+        if title:
+            allowed_labels[_normalize_text(title)] = title
+            support_texts.append(title)
+        source_title = str(item.get("source_title", "") or "").strip()
+        if source_title:
+            allowed_labels[_normalize_text(source_title)] = source_title
+            support_texts.append(source_title)
+        evidence_text = str(item.get("evidence_text", "") or item.get("content_excerpt", "") or "").strip()
+        if evidence_text:
+            support_texts.append(evidence_text)
 
     raw_citations = result.get("citations", []) or []
     unknown_citations: list[str] = []
@@ -158,6 +180,38 @@ def validate_generated_chapter_grounding(
     if chapter_key == "chapter_5_experiment" and result.get("data_based") and not has_experiment_outcomes:
         raise ValueError("实验章节标记为基于真实数据，但缺少实验数据类成果。")
 
+    unsupported_claims = _find_unsupported_specific_data_claims(
+        str(result.get("content", "") or ""),
+        support_texts=support_texts,
+    )
+    if unsupported_claims:
+        raise ValueError(f"检测到缺少依据的具体数据表述：{', '.join(unsupported_claims)}")
+
     validated = dict(result)
     validated["citations"] = _dedupe_preserve_order(normalized_citations)
     return validated
+
+
+def _find_unsupported_specific_data_claims(content: str, *, support_texts: list[str]) -> list[str]:
+    """识别没有依据支撑的百分比、样本量等具体数据。"""
+    if not content:
+        return []
+
+    support_text = "\n".join(support_texts or [])
+    patterns = [
+        r"\d+(?:\.\d+)?\s*%",
+        r"百分之[一二三四五六七八九十百零点\d]+",
+        r"\d+(?:\.\d+)?\s*(?:名|人|份|例|个样本|组样本)",
+    ]
+    claims = _dedupe_preserve_order(
+        match.group(0).strip()
+        for pattern in patterns
+        for match in re.finditer(pattern, content)
+    )
+    unsupported = []
+    normalized_support = _normalize_text(support_text)
+    for claim in claims:
+        normalized_claim = _normalize_text(claim)
+        if normalized_claim and normalized_claim not in normalized_support:
+            unsupported.append(claim)
+    return unsupported

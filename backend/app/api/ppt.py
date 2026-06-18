@@ -2,11 +2,20 @@
 import os
 import time
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
+from sqlalchemy.orm import Session
 
 from ..agents.ppt_agent import ppt_agent
+from ..core.database import get_db
+from ..models.user import User
 from ..schemas.ppt import GenerateProposalPPTRequest, PPTStyleOut
+from ..services.auth_dependency import get_current_user
+from ..services.generated_artifact_service import (
+    can_access_object_key,
+    register_generated_file,
+    register_task_artifact,
+)
 from ..services.upload_service import get_object_stream
 from ..tasks.ppt_task import generate_ppt_task
 
@@ -17,7 +26,7 @@ STORAGE_DIR = os.path.abspath(STORAGE_DIR)
 
 
 @router.get("/list")
-def list_ppts():
+def list_ppts(current_user: User = Depends(get_current_user)):
     """列出所有已生成的 PPT 文件"""
     if not os.path.exists(STORAGE_DIR):
         return {"files": []}
@@ -46,6 +55,8 @@ def list_ppt_styles():
 def generate_proposal_ppt(
     payload: GenerateProposalPPTRequest,
     async_mode: bool = Query(False, alias="async", description="是否异步生成（Celery 任务）"),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
 ):
     """根据项目设计方案生成开题 PPTX 文件。
 
@@ -55,7 +66,9 @@ def generate_proposal_ppt(
         task = generate_ppt_task.delay(
             design=payload.design,
             template=payload.template,
+            user_id=str(current_user.id),
         )
+        register_task_artifact(db, current_user.id, task.id, "proposal_ppt")
         return {"task_id": task.id, "status": "pending"}
 
     try:
@@ -64,6 +77,7 @@ def generate_proposal_ppt(
             design=payload.design,
             template=payload.template,
         )
+        register_generated_file(db, current_user.id, object_key, "proposal_ppt")
         filename = os.path.basename(object_key)
         return {
             "success": True,
@@ -78,8 +92,15 @@ def generate_proposal_ppt(
 
 
 @router.get("/download/{object_key:path}")
-def download_pptx(object_key: str):
+def download_pptx(
+    object_key: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
     """下载生成的 PPTX 文件（MinIO 优先，本地 fallback）"""
+    if not can_access_object_key(db, current_user.id, object_key):
+        raise HTTPException(status_code=404, detail="文件不存在")
+
     stream_result = get_object_stream(object_key)
     if stream_result is None:
         # 兼容旧的本地路径下载

@@ -27,6 +27,88 @@ def _paper(title: str, source: str, score: float) -> dict:
 
 
 class LiteratureResultCompositionTests(unittest.TestCase):
+    def test_chinese_query_without_translation_does_not_search_english_sources(self):
+        class DummyEnglishClient:
+            last_status = "ok"
+            last_detail = ""
+
+            def __init__(self):
+                self.called = False
+
+            def search(self, query, year_from, year_to, limit):
+                self.called = True
+                return [
+                    PaperResult(
+                        title="Irrelevant English result",
+                        authors=["Author"],
+                        year=2024,
+                        venue="Venue",
+                        abstract="No relation to the Chinese query.",
+                        citation_count=100,
+                        source="openalex",
+                    )
+                ]
+
+        agent = LiteratureSearchAgent()
+        agent.openalex = DummyEnglishClient()
+        agent._ensure_en_keywords = lambda keywords_cn: []
+
+        result = agent.search_by_requirement(
+            keywords_cn=["生物信息在大语言模型中的应用"],
+            keywords_en=["生物信息在大语言模型中的应用"],
+            year_from=2020,
+            year_to=2026,
+            limit=5,
+            library_scope="all",
+            sources=["openalex"],
+        )
+
+        self.assertFalse(agent.openalex.called)
+        self.assertEqual(result["papers"], [])
+
+    def test_rank_results_filters_irrelevant_high_citation_papers(self):
+        agent = LiteratureSearchAgent()
+        ranked = agent._rank_results(
+            [
+                PaperResult(
+                    title="The twin global crises of climate change and water",
+                    authors=["Author"],
+                    year=2023,
+                    venue="Nature",
+                    abstract="Climate change and water security require accelerated action.",
+                    citation_count=10000,
+                    source="crossref",
+                ),
+                PaperResult(
+                    title="Large language models for bioinformatics",
+                    authors=["Author"],
+                    year=2024,
+                    venue="Bioinformatics",
+                    abstract="Large language models support bioinformatics applications and biological sequence analysis.",
+                    citation_count=12,
+                    source="openalex",
+                ),
+            ],
+            keywords_cn=["生物信息", "大语言模型"],
+            keywords_en=["large language models", "bioinformatics"],
+            year_from=2020,
+            year_to=2026,
+            library_scope="all",
+            min_citation_count=0,
+            prefer_high_impact=True,
+        )
+
+        titles = [item["paper"].title for item in ranked]
+        self.assertIn("Large language models for bioinformatics", titles)
+        self.assertNotIn("The twin global crises of climate change and water", titles)
+
+    def test_chinese_only_english_keywords_are_normalized_away(self):
+        agent = LiteratureSearchAgent()
+
+        normalized = agent._normalize_english_keywords(["生物信息在大语言模型中的应用"])
+
+        self.assertEqual(normalized, [])
+
     def test_all_scope_keeps_both_languages_with_minimum_three(self):
         agent = LiteratureSearchAgent()
         ranked = [
@@ -156,6 +238,93 @@ class LiteratureResultCompositionTests(unittest.TestCase):
         self.assertEqual(len(supplemented), 8)
         self.assertIn("cnki", sources)
         self.assertIn("cqvip", sources)
+
+    def test_open_access_filter_keeps_only_open_access_papers(self):
+        agent = LiteratureSearchAgent()
+        papers = [
+            PaperResult(
+                title="OA paper",
+                authors=["Author"],
+                year=2024,
+                venue="Venue",
+                abstract="English abstract",
+                citation_count=10,
+                source="openalex",
+                is_open_access=True,
+            ),
+            PaperResult(
+                title="Closed paper",
+                authors=["Author"],
+                year=2024,
+                venue="Venue",
+                abstract="English abstract",
+                citation_count=10,
+                source="openalex",
+                is_open_access=False,
+            ),
+        ]
+
+        ranked = agent._rank_results(
+            papers,
+            keywords_cn=[],
+            keywords_en=["paper"],
+            year_from=2020,
+            year_to=2026,
+            library_scope="all",
+            min_citation_count=0,
+            prefer_high_impact=False,
+            open_access_only=True,
+            quality_tags=[],
+        )
+
+        titles = [item["paper"].title for item in ranked]
+        self.assertEqual(titles, ["OA paper"])
+
+    def test_quality_tag_filter_keeps_matching_inference_labels(self):
+        agent = LiteratureSearchAgent()
+        papers = [
+            PaperResult(
+                title="IEEE conference paper",
+                authors=["Author"],
+                year=2024,
+                venue="Proceedings of IEEE Conference on AI",
+                abstract="English abstract",
+                citation_count=10,
+                source="crossref",
+            ),
+            PaperResult(
+                title="General journal paper",
+                authors=["Author"],
+                year=2024,
+                venue="General Journal",
+                abstract="English abstract",
+                citation_count=10,
+                source="openalex",
+            ),
+        ]
+
+        ranked = agent._rank_results(
+            papers,
+            keywords_cn=[],
+            keywords_en=["paper"],
+            year_from=2020,
+            year_to=2026,
+            library_scope="all",
+            min_citation_count=0,
+            prefer_high_impact=False,
+            open_access_only=False,
+            quality_tags=["ieee"],
+        )
+
+        titles = [item["paper"].title for item in ranked]
+        self.assertEqual(titles, ["IEEE conference paper"])
+
+    def test_resolve_sources_accepts_pubmed(self):
+        agent = LiteratureSearchAgent()
+
+        sources = agent._resolve_sources("all", ["pubmed", "openalex"])
+
+        self.assertEqual(sources, ["pubmed", "openalex"])
 
 
 if __name__ == "__main__":

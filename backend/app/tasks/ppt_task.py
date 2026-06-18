@@ -1,12 +1,15 @@
 """PPT 生成 Celery 异步任务"""
 import os
+from uuid import UUID
 
 from ..core.celery_app import celery_app
+from ..core.database import SessionLocal
 from ..agents.ppt_agent import ppt_agent
+from ..services.generated_artifact_service import register_generated_file
 
 
 @celery_app.task(bind=True, max_retries=1, default_retry_delay=30)
-def generate_ppt_task(self, design: dict, template: str) -> dict:
+def generate_ppt_task(self, design: dict, template: str, user_id: str | None = None) -> dict:
     """异步生成开题 PPT，返回文件信息。
 
     参数：
@@ -18,6 +21,18 @@ def generate_ppt_task(self, design: dict, template: str) -> dict:
     try:
         style = ppt_agent.resolve_style(template)
         object_key = ppt_agent.generate(design=design, template=template)
+        if user_id:
+            db = SessionLocal()
+            try:
+                register_generated_file(
+                    db=db,
+                    user_id=UUID(user_id),
+                    object_key=object_key,
+                    artifact_type="proposal_ppt",
+                    task_id=self.request.id,
+                )
+            finally:
+                db.close()
         filename = os.path.basename(object_key)
         return {
             "filename": filename,

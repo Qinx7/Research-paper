@@ -44,6 +44,36 @@ EN_STOP_WORDS = frozenset({
 # 关键词提取与图谱构建
 # ============================================================
 
+def _parse_keywords(existing) -> list[str]:
+    """把数据库中的关键词字段安全解析成字符串列表。"""
+    if not existing:
+        return []
+    try:
+        keywords = json.loads(existing) if isinstance(existing, str) else existing
+    except (json.JSONDecodeError, TypeError):
+        return []
+    if not isinstance(keywords, list):
+        return []
+    return [
+        str(keyword).strip()
+        for keyword in keywords
+        if str(keyword).strip()
+    ][:5]
+
+
+def _collect_existing_keywords(papers: list[Paper]) -> tuple[dict[str, list[str]], list[Paper]]:
+    """优先收集已持久化关键词，避免无 LLM 配置时退回到低质量标题分词。"""
+    keywords_map: dict[str, list[str]] = {}
+    missing: list[Paper] = []
+    for paper in papers:
+        keywords = _parse_keywords(getattr(paper, "keywords", None))
+        if keywords:
+            keywords_map[str(paper.id)] = keywords
+        else:
+            missing.append(paper)
+    return keywords_map, missing
+
+
 def _ensure_keywords(papers: list[Paper], api_key: str, base_url: str, model: str) -> dict[str, list[str]]:
     """确保每篇论文都有提取好的关键词。
 
@@ -56,15 +86,10 @@ def _ensure_keywords(papers: list[Paper], api_key: str, base_url: str, model: st
 
     for p in papers:
         pid = str(p.id)
-        existing = getattr(p, "keywords", None)
-        if existing:
-            try:
-                kw = json.loads(existing) if isinstance(existing, str) else existing
-                if isinstance(kw, list) and len(kw) > 0:
-                    result[pid] = kw
-                    continue
-            except (json.JSONDecodeError, TypeError):
-                pass
+        kw = _parse_keywords(getattr(p, "keywords", None))
+        if kw:
+            result[pid] = kw
+            continue
         missing.append((pid, p.title or "", p.abstract or ""))
 
     if not missing:
@@ -301,7 +326,9 @@ def build_timeline(papers: list[Paper]) -> dict:
     """
     year_data: dict[int, list[dict]] = {}
     for p in papers:
-        year = p.year or 0
+        year = p.year
+        if not year:
+            continue
         if year not in year_data:
             year_data[year] = []
         year_data[year].append({
@@ -311,6 +338,9 @@ def build_timeline(papers: list[Paper]) -> dict:
             "venue": p.venue,
             "value": max(5, math.sqrt((p.citation_count or 0) + 1) * 8),
         })
+
+    if not year_data:
+        return {"series": [], "year_range": []}
 
     series = []
     for year in sorted(year_data.keys()):
@@ -422,10 +452,10 @@ def build_knowledge_graph(
     if not papers:
         return {
             "network": {"nodes": [], "edges": [], "categories": []},
-            "timeline": {"series": []},
+            "timeline": {"series": [], "year_range": []},
             "clusters": {"clusters": []},
-            "impact": {"top_papers": [], "venue_distribution": []},
-            "stats": {"total_papers": 0, "year_range": [], "total_citations": 0},
+            "impact": {"top_papers": [], "venue_distribution": [], "citation_range": [0, 0]},
+            "stats": {"total_papers": 0, "year_range": [], "total_citations": 0, "keywords_count": 0},
         }
 
     # 关键词提取（有则读 DB，无则调 LLM）
@@ -438,8 +468,9 @@ def build_knowledge_graph(
             fallback_input = [(str(p.id), p.title or "", p.abstract or "") for p in papers]
             keywords_map = _fallback_keywords(fallback_input)
     else:
-        fallback_input = [(str(p.id), p.title or "", p.abstract or "") for p in papers]
-        keywords_map = _fallback_keywords(fallback_input)
+        keywords_map, missing_papers = _collect_existing_keywords(papers)
+        fallback_input = [(str(p.id), p.title or "", p.abstract or "") for p in missing_papers]
+        keywords_map.update(_fallback_keywords(fallback_input))
 
     # 构建 4 种视图
     network = build_network_graph(papers, keywords_map)

@@ -5,12 +5,16 @@ import { useParams, useRouter } from "next/navigation";
 import PaperWorkflow from "@/components/PaperWorkflow";
 import KnowledgeGraph from "@/components/KnowledgeGraph";
 import ZoteroSync from "@/components/ZoteroSync";
+import ProjectLiteratureLibrary from "@/components/ProjectLiteratureLibrary";
+import ProjectLiteratureMatrix from "@/components/ProjectLiteratureMatrix";
 import { getToken, deleteProject } from "@/lib/api";
 
-type ViewMode = "overview" | "paper" | "knowledge" | "zotero";
+type ViewMode = "overview" | "literature" | "matrix" | "paper" | "knowledge" | "zotero";
 
 const VIEWS: { key: ViewMode; label: string }[] = [
   { key: "overview", label: "项目概览" },
+  { key: "literature", label: "文献库" },
+  { key: "matrix", label: "文献矩阵" },
   { key: "paper", label: "论文工作流" },
   { key: "knowledge", label: "知识图谱" },
   { key: "zotero", label: "Zotero 导入" },
@@ -152,6 +156,12 @@ export default function ProjectDetailPage() {
                 action="查看图谱"
                 onClick={() => setView("knowledge")}
               />
+              <OverviewCard
+                title="文献矩阵"
+                description="把项目文献整理为综述可用的作者年份、方法、发现、局限与借鉴点表格"
+                action="生成矩阵"
+                onClick={() => setView("matrix")}
+              />
             </div>
 
             {/* 删除项目 */}
@@ -184,6 +194,16 @@ export default function ProjectDetailPage() {
               )}
             </div>
           </div>
+        )}
+
+        {/* ---- 项目文献库 ---- */}
+        {view === "literature" && (
+          <ProjectLiteratureLibrary projectId={projectId} />
+        )}
+
+        {/* ---- 文献矩阵 ---- */}
+        {view === "matrix" && (
+          <ProjectLiteratureMatrix projectId={projectId} />
         )}
 
         {/* ---- 论文工作流 ---- */}

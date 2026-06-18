@@ -90,6 +90,50 @@ class GroundingGuardTests(unittest.TestCase):
                 papers=papers,
             )
 
+    def test_generated_chapter_allows_internal_evidence_card_citation(self):
+        result = {
+            "chapter_key": "chapter_1_introduction",
+            "title": "第一章 绪论",
+            "content": "已有内部证据卡片显示，AI 反馈帮助学生更快形成初稿并提升写作信心。",
+            "citations": ["写作信心提升"],
+            "data_based": False,
+        }
+        evidence_items = [
+            {
+                "title": "写作信心提升",
+                "evidence_text": "AI 反馈帮助学生更快形成初稿并提升写作信心。",
+                "source_title": "生成式人工智能支持研究生论文写作研究",
+            }
+        ]
+
+        validated = validate_generated_chapter_grounding(
+            chapter_key="chapter_1_introduction",
+            result=result,
+            outcomes=[],
+            papers=[],
+            evidence_items=evidence_items,
+        )
+
+        self.assertEqual(validated["citations"], ["写作信心提升"])
+
+    def test_generated_chapter_rejects_unsupported_specific_percentages(self):
+        result = {
+            "chapter_key": "chapter_5_experiment",
+            "title": "第五章 实验设计与结果分析",
+            "content": "实验结果显示，系统使论文写作效率提升 92%，且满意度达到 96%。",
+            "citations": [],
+            "data_based": False,
+        }
+
+        with self.assertRaises(ValueError):
+            validate_generated_chapter_grounding(
+                chapter_key="chapter_5_experiment",
+                result=result,
+                outcomes=[],
+                papers=[],
+                evidence_items=[],
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

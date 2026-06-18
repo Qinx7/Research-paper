@@ -9,15 +9,30 @@ from ..agents.requirement_agent import requirement_agent
 from ..agents.literature_search_agent import literature_search_agent
 from ..agents.literature_review_agent import literature_review_agent
 from ..core.config import settings
-from ..core.database import get_db
+from ..core.database import get_db, SessionLocal
 from ..models.paper import Paper
+from ..models.project import Project
+from ..models.user import User
 from ..schemas.paper import (
     LiteratureSearchRequest,
     KeywordsRequest,
     LiteratureAnalyzeRequest,
     PaperOut,
+    PaperSaveRequest,
+    PaperAnalysisOut,
+    LiteratureMatrixOut,
 )
+from ..services.auth_dependency import get_current_user
+from ..services.ownership import get_owned_project
 from ..services.knowledge_graph_service import build_knowledge_graph
+from ..services.literature_matrix_service import build_literature_matrix
+from ..services.literature_search_task_service import (
+    create_search_task,
+    mark_task_failed,
+    mark_task_running,
+    mark_task_success,
+)
+from ..services.paper_analysis_service import analyze_saved_paper
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/literature", tags=["literature"])
@@ -39,7 +54,11 @@ def generate_keywords(payload: KeywordsRequest):
 
 
 @router.post("/search")
-def search_literature(payload: LiteratureSearchRequest):
+def search_literature(
+    payload: LiteratureSearchRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
     """
     根据关键词检索文献，结果自动保存到数据库。
 
@@ -51,25 +70,105 @@ def search_literature(payload: LiteratureSearchRequest):
         "year_to": 2026
     }
     """
-    result = literature_search_agent.search_by_requirement(
-        keywords_cn=payload.keywords_cn,
-        keywords_en=payload.keywords_en,
-        year_from=payload.year_from or 2020,
-        year_to=payload.year_to or 2026,
-        limit=30,
-        mode=payload.mode,
-        library_scope=payload.library_scope,
-        sources=payload.sources,
-        min_citation_count=payload.min_citation_count,
-        prefer_high_impact=payload.prefer_high_impact,
-    )
+    if payload.project_id:
+        get_owned_project(payload.project_id, current_user, db)
 
-    # 尝试保存到数据库（数据库不可用时静默跳过）
-    saved_count = _save_papers_to_db(result["papers"])
-    if saved_count > 0:
-        logger.info(f"文献检索完成: {result['total_found']} 条, 新入库 {saved_count} 条")
+    task = create_literature_search_task(payload)
+    if task:
+        mark_literature_search_task_running(task.id)
 
-    return {**result, "saved_to_db": saved_count}
+    try:
+        result = literature_search_agent.search_by_requirement(
+            keywords_cn=payload.keywords_cn,
+            keywords_en=payload.keywords_en,
+            year_from=payload.year_from or 2020,
+            year_to=payload.year_to or 2026,
+            limit=30,
+            mode=payload.mode,
+            library_scope=payload.library_scope,
+            sources=payload.sources,
+            min_citation_count=payload.min_citation_count,
+            prefer_high_impact=payload.prefer_high_impact,
+            open_access_only=payload.open_access_only,
+            quality_tags=payload.quality_tags,
+        )
+
+        # 尝试保存到数据库（数据库不可用时静默跳过）
+        saved_count = _save_papers_to_db(result["papers"])
+        if saved_count > 0:
+            logger.info(f"文献检索完成: {result['total_found']} 条, 新入库 {saved_count} 条")
+        if task:
+            complete_literature_search_task(task.id, result)
+
+        return {**result, "saved_to_db": saved_count, "task_id": str(task.id) if task else None}
+    except Exception as e:
+        if task:
+            fail_literature_search_task(task.id, str(e))
+        raise
+
+
+def create_literature_search_task(payload: LiteratureSearchRequest):
+    """为同步检索创建任务记录；失败不影响检索主流程。"""
+    db = None
+    try:
+        db = SessionLocal()
+        return create_search_task(db, payload)
+    except Exception as e:
+        logger.warning("创建检索任务失败: %s", e)
+        if db:
+            db.rollback()
+        return None
+    finally:
+        if db:
+            db.close()
+
+
+def mark_literature_search_task_running(task_id):
+    """把检索任务标记为执行中；记录失败不影响检索主流程。"""
+    db = None
+    try:
+        db = SessionLocal()
+        return mark_task_running(db, task_id)
+    except Exception as e:
+        logger.warning("更新检索任务状态失败: %s", e)
+        if db:
+            db.rollback()
+        return None
+    finally:
+        if db:
+            db.close()
+
+
+def complete_literature_search_task(task_id, result: dict):
+    """保存检索任务的来源诊断和结果快照。"""
+    db = None
+    try:
+        db = SessionLocal()
+        return mark_task_success(db, task_id, result)
+    except Exception as e:
+        logger.warning("保存检索任务结果失败: %s", e)
+        if db:
+            db.rollback()
+        return None
+    finally:
+        if db:
+            db.close()
+
+
+def fail_literature_search_task(task_id, message: str):
+    """保存检索任务失败摘要。"""
+    db = None
+    try:
+        db = SessionLocal()
+        return mark_task_failed(db, task_id, message)
+    except Exception as e:
+        logger.warning("保存检索任务失败状态失败: %s", e)
+        if db:
+            db.rollback()
+        return None
+    finally:
+        if db:
+            db.close()
 
 
 def _save_papers_to_db(papers: list[dict]) -> int:
@@ -134,6 +233,170 @@ def list_papers(
             db.close()
 
 
+@router.get("/projects/{project_id}/papers", response_model=list[PaperOut])
+def list_project_papers(
+    project_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """列出某个项目沉淀下来的文献库。"""
+    project = _get_owned_project(project_id, current_user, db)
+    return (
+        db.query(Paper)
+        .filter(Paper.project_id == project.id)
+        .order_by(Paper.created_at.desc())
+        .all()
+    )
+
+
+@router.get("/projects/{project_id}/papers/{paper_id}", response_model=PaperOut)
+def get_project_paper(
+    project_id: str,
+    paper_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """获取项目文献库中的单篇文献详情。"""
+    from uuid import UUID as UUIDType
+
+    project = _get_owned_project(project_id, current_user, db)
+    paper = (
+        db.query(Paper)
+        .filter(Paper.id == UUIDType(paper_id), Paper.project_id == project.id)
+        .first()
+    )
+    if not paper:
+        raise HTTPException(status_code=404, detail="文献不存在")
+    return paper
+
+
+@router.get("/projects/{project_id}/matrix", response_model=LiteratureMatrixOut)
+def get_project_literature_matrix(
+    project_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """生成项目文献库的结构化矩阵。"""
+    project = _get_owned_project(project_id, current_user, db)
+    papers = (
+        db.query(Paper)
+        .filter(Paper.project_id == project.id)
+        .order_by(Paper.created_at.desc())
+        .all()
+    )
+    return build_literature_matrix(papers, project.user_requirement)
+
+
+@router.post("/projects/{project_id}/papers", response_model=PaperOut, status_code=201)
+def save_project_paper(
+    project_id: str,
+    payload: PaperSaveRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """把搜索结果保存到项目文献库，优先复用同项目内已有记录。"""
+    project = _get_owned_project(project_id, current_user, db)
+    normalized_title = payload.title.strip()
+    if not normalized_title:
+        raise HTTPException(status_code=400, detail="文献标题不能为空")
+
+    existing = (
+        db.query(Paper)
+        .filter(Paper.project_id == project.id, Paper.title == normalized_title)
+        .first()
+    )
+    if existing:
+        return existing
+
+    cached = (
+        db.query(Paper)
+        .filter(Paper.project_id.is_(None), Paper.title == normalized_title)
+        .first()
+    )
+    if cached:
+        cached.project_id = project.id
+        cached.relevance_score = payload.relevance_score or cached.relevance_score or 0.0
+        db.commit()
+        db.refresh(cached)
+        return cached
+
+    paper = Paper(
+        project_id=project.id,
+        title=normalized_title,
+        authors=";".join(payload.authors or []),
+        year=payload.year,
+        venue=payload.venue,
+        doi=payload.doi,
+        abstract=payload.abstract,
+        url=payload.url,
+        citation_count=payload.citation_count or 0,
+        source=payload.source,
+        relevance_score=payload.relevance_score or 0.0,
+    )
+    db.add(paper)
+    db.commit()
+    db.refresh(paper)
+    return paper
+
+
+@router.post("/projects/{project_id}/papers/{paper_id}/analyze", response_model=PaperAnalysisOut)
+def analyze_project_paper(
+    project_id: str,
+    paper_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """对项目文献库中的单篇文献做保守结构化分析。"""
+    from uuid import UUID as UUIDType
+
+    project = _get_owned_project(project_id, current_user, db)
+    paper = (
+        db.query(Paper)
+        .filter(Paper.id == UUIDType(paper_id), Paper.project_id == project.id)
+        .first()
+    )
+    if not paper:
+        raise HTTPException(status_code=404, detail="文献不存在")
+    return analyze_saved_paper(paper, project.user_requirement)
+
+
+@router.delete("/projects/{project_id}/papers/{paper_id}", status_code=204)
+def remove_project_paper(
+    project_id: str,
+    paper_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """从项目文献库移除文献；保留全局缓存记录，避免破坏检索缓存。"""
+    from uuid import UUID as UUIDType
+
+    project = _get_owned_project(project_id, current_user, db)
+    paper = (
+        db.query(Paper)
+        .filter(Paper.id == UUIDType(paper_id), Paper.project_id == project.id)
+        .first()
+    )
+    if not paper:
+        raise HTTPException(status_code=404, detail="文献不存在")
+    paper.project_id = None
+    db.commit()
+    return None
+
+
+def _get_owned_project(project_id: str, current_user: User, db: Session) -> Project:
+    """确保项目存在且属于当前登录用户。"""
+    from uuid import UUID as UUIDType
+
+    project = (
+        db.query(Project)
+        .filter(Project.id == UUIDType(project_id), Project.user_id == current_user.id)
+        .first()
+    )
+    if not project:
+        raise HTTPException(status_code=404, detail="项目不存在")
+    return project
+
+
 @router.post("/analyze")
 def analyze_literature(payload: LiteratureAnalyzeRequest):
     """
@@ -169,7 +432,11 @@ def analyze_literature(payload: LiteratureAnalyzeRequest):
 # ---- 知识图谱 ----
 
 @router.get("/{project_id}/knowledge-graph")
-def get_knowledge_graph(project_id: str, db: Session = Depends(get_db)):
+def get_knowledge_graph(
+    project_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
     """获取项目文献的知识图谱数据。
 
     返回 4 种视图：
@@ -181,7 +448,8 @@ def get_knowledge_graph(project_id: str, db: Session = Depends(get_db)):
     """
     from uuid import UUID as UUIDType
 
-    papers = db.query(Paper).filter(Paper.project_id == UUIDType(project_id)).all()
+    project = get_owned_project(project_id, current_user, db)
+    papers = db.query(Paper).filter(Paper.project_id == project.id).all()
     if not papers:
         return build_knowledge_graph([])
 

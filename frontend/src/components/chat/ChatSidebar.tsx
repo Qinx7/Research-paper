@@ -14,49 +14,75 @@ interface ChatSidebarProps {
   onNewChat: () => void;
   onOpenSettings: () => void;
   refreshKey: number;
+  searchEntryMode?: "search" | "home";
 }
+type ModuleItem = {
+  key: "search" | "research" | "writing";
+  label: string;
+  desc: string;
+  href: string;
+  title: string;
+  icon: React.ReactNode;
+};
 
-const moduleItems = [
-  {
-    key: "search",
-    label: "文献搜索",
-    desc: "对话式检索",
-    href: "/chat",
-    title: "新建文献搜索对话",
-    icon: (
-      <>
-        <circle cx="11" cy="11" r="5" />
-        <path d="m16 16 4 4" />
-      </>
-    ),
-  },
-  {
-    key: "research",
-    label: "研究方向",
-    desc: "方向分析",
-    href: "/research",
-    title: "进入研究方向模块",
-    icon: (
-      <>
-        <path d="M10 2v6l-4.5 8A4 4 0 0 0 9 22h6a4 4 0 0 0 3.5-6L14 8V2" />
-        <path d="M8 2h8" />
-      </>
-    ),
-  },
-  {
-    key: "writing",
-    label: "论文写作",
-    desc: "辅助撰写",
-    href: "/writing",
-    title: "进入论文写作模块",
-    icon: (
-      <>
-        <path d="M12 20h9" />
-        <path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z" />
-      </>
-    ),
-  },
-];
+function buildModuleItems(searchEntryMode: "search" | "home"): ModuleItem[] {
+  return [
+    searchEntryMode === "home"
+      ? {
+          key: "search",
+          label: "返回首页",
+          desc: "回到搜索首页",
+          href: "/",
+          title: "返回首页",
+          icon: (
+            <>
+              <path d="m3 10.5 9-7 9 7" />
+              <path d="M5 10v10h14V10" />
+              <path d="M9 20v-6h6v6" />
+            </>
+          ),
+        }
+      : {
+          key: "search",
+          label: "文献搜索",
+          desc: "对话式检索",
+          href: "/chat",
+          title: "新建文献搜索对话",
+          icon: (
+            <>
+              <circle cx="11" cy="11" r="5" />
+              <path d="m16 16 4 4" />
+            </>
+          ),
+        },
+    {
+      key: "research",
+      label: "研究方向",
+      desc: "方向分析",
+      href: "/research",
+      title: "进入研究方向模块",
+      icon: (
+        <>
+          <path d="M10 2v6l-4.5 8A4 4 0 0 0 9 22h6a4 4 0 0 0 3.5-6L14 8V2" />
+          <path d="M8 2h8" />
+        </>
+      ),
+    },
+    {
+      key: "writing",
+      label: "论文写作",
+      desc: "辅助撰写",
+      href: "/writing",
+      title: "进入论文写作模块",
+      icon: (
+        <>
+          <path d="M12 20h9" />
+          <path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z" />
+        </>
+      ),
+    },
+  ];
+}
 
 export default function ChatSidebar({
   activeModule = "search",
@@ -65,10 +91,12 @@ export default function ChatSidebar({
   onNewChat,
   onOpenSettings,
   refreshKey,
+  searchEntryMode = "search",
 }: ChatSidebarProps) {
   const router = useRouter();
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [collapsed, setCollapsed] = useState(false);
+  const moduleItems = buildModuleItems(searchEntryMode);
 
   const loadList = useCallback(async () => {
     try {
@@ -105,8 +133,8 @@ export default function ChatSidebar({
     }
   };
 
-  const handleModuleClick = (item: (typeof moduleItems)[number]) => {
-    if (item.key === "search") {
+  const handleModuleClick = (item: ModuleItem) => {
+    if (item.key === "search" && searchEntryMode === "search") {
       onNewChat();
       if (window.location.pathname !== "/chat") router.push(item.href);
       return;
@@ -302,7 +330,7 @@ function ModuleButton({
   active,
   onClick,
 }: {
-  item: (typeof moduleItems)[number];
+  item: ModuleItem;
   active: boolean;
   onClick: () => void;
 }) {

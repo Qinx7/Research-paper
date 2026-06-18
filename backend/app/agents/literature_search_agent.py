@@ -15,16 +15,43 @@ from ..services.literature_search import (
 )
 from ..services.cnki_search import CNKIClient
 from ..services.cqvip_search import CQVIPClient
+from ..services.crossref_search import CrossrefClient
+from ..services.arxiv_search import ArxivClient
+from ..services.pubmed_search import PubMedClient
 
 logger = logging.getLogger(__name__)
 
 SUPPORTED_SEARCH_MODES = {"quick_search", "literature_review", "deep_research"}
 SUPPORTED_LIBRARY_SCOPES = {"all", "cn", "en"}
 SOURCE_QUALITY_PRIOR = {
+    "pubmed": 0.9,
     "semantic_scholar": 0.88,
     "openalex": 0.84,
     "cnki": 0.82,
+    "crossref": 0.80,
+    "arxiv": 0.78,
     "cqvip": 0.74,
+}
+
+CN_TO_EN_KEYWORD_GLOSSARY = {
+    "大语言模型": "large language models",
+    "大模型": "large language models",
+    "语言模型": "language models",
+    "生成式人工智能": "generative artificial intelligence",
+    "人工智能": "artificial intelligence",
+    "机器学习": "machine learning",
+    "深度学习": "deep learning",
+    "自然语言处理": "natural language processing",
+    "生物信息": "bioinformatics",
+    "生物信息学": "bioinformatics",
+    "生物医学": "biomedicine",
+    "医学": "medicine",
+    "教育": "education",
+    "学习分析": "learning analytics",
+    "知识图谱": "knowledge graph",
+    "智能体": "agent",
+    "多智能体": "multi-agent systems",
+    "推荐系统": "recommender systems",
 }
 
 
@@ -34,6 +61,7 @@ class LiteratureSearchAgent:
     def __init__(self):
         self.openalex = OpenAlexClient()
         self.semantic = SemanticScholarClient(api_key=settings.SEMANTIC_SCHOLAR_API_KEY)
+        self.pubmed = PubMedClient()
         self.cnki = CNKIClient(
             headless=settings.CNKI_HEADLESS,
             timeout=settings.CNKI_TIMEOUT,
@@ -42,6 +70,8 @@ class LiteratureSearchAgent:
             headless=settings.CQVIP_HEADLESS,
             timeout=settings.CQVIP_TIMEOUT,
         )
+        self.crossref = CrossrefClient()
+        self.arxiv = ArxivClient()
 
     def _ensure_en_keywords(self, keywords_cn: list[str]) -> list[str]:
         """当正则提取不到英文关键词时，用 LLM 将中文关键词转译为英文学术检索词。"""
@@ -49,7 +79,7 @@ class LiteratureSearchAgent:
             return []
         api_key = settings.DEEPSEEK_API_KEY
         if not api_key:
-            return []
+            return self._fallback_en_keywords(keywords_cn)
         cn_text = "、".join(keywords_cn[:6])
         try:
             resp = httpx.post(
@@ -80,11 +110,31 @@ class LiteratureSearchAgent:
             data = resp.json()
             text = data["choices"][0]["message"]["content"].strip()
             en_keywords = [kw.strip() for kw in text.split(",") if kw.strip()]
+            en_keywords = self._normalize_english_keywords(en_keywords)
             logger.info("LLM 转译英文关键词: %s → %s", cn_text, en_keywords)
-            return en_keywords[:5]
+            return en_keywords[:5] or self._fallback_en_keywords(keywords_cn)
         except Exception as e:
             logger.warning("英文关键词转译失败: %s", e)
-            return []
+            return self._fallback_en_keywords(keywords_cn)
+
+    def _fallback_en_keywords(self, keywords_cn: list[str]) -> list[str]:
+        """在 LLM 不可用时，用保守术语表生成英文检索词，避免英文源被直接跳过。"""
+        text = " ".join(keywords_cn or [])
+        keywords: list[str] = []
+        for cn_term, en_term in CN_TO_EN_KEYWORD_GLOSSARY.items():
+            if cn_term in text and en_term not in keywords:
+                keywords.append(en_term)
+        return keywords[:5]
+
+    def _normalize_english_keywords(self, keywords_en: list[str]) -> list[str]:
+        """过滤误传到英文检索字段里的中文词，避免英文文献源被中文原句污染。"""
+        normalized = []
+        for keyword in keywords_en or []:
+            keyword = keyword.strip()
+            if not keyword or re.search(r"[\u4e00-\u9fff]", keyword):
+                continue
+            normalized.append(keyword)
+        return normalized
 
     def search_by_requirement(
         self,
@@ -98,6 +148,8 @@ class LiteratureSearchAgent:
         sources: list[str] | None = None,
         min_citation_count: int = 0,
         prefer_high_impact: bool = False,
+        open_access_only: bool = False,
+        quality_tags: list[str] | None = None,
     ) -> dict:
         """根据关键词执行学术搜索任务。"""
         mode = mode if mode in SUPPORTED_SEARCH_MODES else "quick_search"
@@ -105,13 +157,14 @@ class LiteratureSearchAgent:
         selected_sources = self._resolve_sources(library_scope, sources)
         source_limit = self._resolve_source_limit(limit=limit, mode=mode)
 
+        keywords_en = self._normalize_english_keywords(keywords_en)
         # 英文关键词不足时，用 LLM 从中文关键词转译，避免用中文搜英文数据库无结果
         if not keywords_en and keywords_cn:
             keywords_en = self._ensure_en_keywords(keywords_cn)
-        query_en = self._build_query(keywords_en) if keywords_en else " ".join(keywords_cn)
+        query_en = self._build_query(keywords_en) if keywords_en else ""
         query_cn = self._build_cn_query(keywords_cn) if keywords_cn else query_en
         logger.info(
-            "学术检索执行: mode=%s scope=%s sources=%s cn_keywords=%s en_keywords=%s query_cn=%s query_en=%s",
+            "学术检索执行: mode=%s scope=%s sources=%s cn_keywords=%s en_keywords=%s query_cn=%s query_en=%s open_access_only=%s quality_tags=%s",
             mode,
             library_scope,
             selected_sources,
@@ -119,13 +172,18 @@ class LiteratureSearchAgent:
             keywords_en,
             query_cn,
             query_en,
+            open_access_only,
+            quality_tags or [],
         )
 
         per_source_results: dict[str, list[PaperResult]] = {}
-        if "openalex" in selected_sources:
+        if "pubmed" in selected_sources and query_en:
+            per_source_results["pubmed"] = self.pubmed.search(query_en, year_from, year_to, source_limit)
+            logger.info("文献源返回: source=pubmed count=%s query=%s", len(per_source_results["pubmed"]), query_en)
+        if "openalex" in selected_sources and query_en:
             per_source_results["openalex"] = self.openalex.search(query_en, year_from, year_to, source_limit)
             logger.info("文献源返回: source=openalex count=%s query=%s", len(per_source_results["openalex"]), query_en)
-        if "semantic_scholar" in selected_sources:
+        if "semantic_scholar" in selected_sources and query_en:
             per_source_results["semantic_scholar"] = self.semantic.search(query_en, year_from, year_to, source_limit)
             logger.info("文献源返回: source=semantic_scholar count=%s query=%s", len(per_source_results["semantic_scholar"]), query_en)
         if "cnki" in selected_sources and settings.CNKI_ENABLED and keywords_cn:
@@ -146,6 +204,12 @@ class LiteratureSearchAgent:
                 source_limit=source_limit,
             )
             logger.info("文献源返回: source=cqvip count=%s query=%s", len(per_source_results["cqvip"]), query_cn)
+        if "crossref" in selected_sources and query_en:
+            per_source_results["crossref"] = self.crossref.search(query_en, year_from, year_to, source_limit)
+            logger.info("文献源返回: source=crossref count=%s query=%s", len(per_source_results["crossref"]), query_en)
+        if "arxiv" in selected_sources and query_en:
+            per_source_results["arxiv"] = self.arxiv.search(query_en, year_from, year_to, source_limit)
+            logger.info("文献源返回: source=arxiv count=%s query=%s", len(per_source_results["arxiv"]), query_en)
 
         raw_results = []
         for source_name in selected_sources:
@@ -161,6 +225,8 @@ class LiteratureSearchAgent:
             library_scope=library_scope,
             min_citation_count=min_citation_count,
             prefer_high_impact=prefer_high_impact,
+            open_access_only=open_access_only,
+            quality_tags=quality_tags or [],
         )
         composed = self._compose_results_by_scope(
             ranked,
@@ -181,7 +247,7 @@ class LiteratureSearchAgent:
         source_statuses = self._build_source_statuses(selected_sources, per_source_results)
 
         return {
-            "query": query_en,
+            "query": query_en or query_cn,
             "search_mode": mode,
             "library_scope": library_scope,
             "selected_sources": selected_sources,
@@ -192,15 +258,16 @@ class LiteratureSearchAgent:
         }
 
     def _resolve_sources(self, library_scope: str, sources: list[str] | None) -> list[str]:
+        all_valid = {"pubmed", "openalex", "semantic_scholar", "cnki", "cqvip", "crossref", "arxiv"}
         if sources:
-            valid = [s for s in sources if s in {"openalex", "semantic_scholar", "cnki", "cqvip"}]
+            valid = [s for s in sources if s in all_valid]
             if valid:
                 return valid
         if library_scope == "cn":
             return ["cnki", "cqvip"]
         if library_scope == "en":
-            return ["openalex", "semantic_scholar"]
-        return ["openalex", "semantic_scholar", "cnki", "cqvip"]
+            return ["pubmed", "openalex", "semantic_scholar", "crossref", "arxiv"]
+        return ["pubmed", "openalex", "semantic_scholar", "crossref", "arxiv", "cnki", "cqvip"]
 
     def _resolve_source_limit(self, *, limit: int, mode: str) -> int:
         if mode == "deep_research":
@@ -276,6 +343,15 @@ class LiteratureSearchAgent:
                     logger.info("中文源回退查询成功: source=%s original=%s fallback=%s count=%s",
                                 client.__class__.__name__, query_cn, candidate_query, len(results))
                 return results
+            if getattr(client, "last_status", "") in {"gateway_timeout", "blocked", "error", "http_error"}:
+                logger.info(
+                    "中文源服务异常，停止回退查询: source=%s query=%s status=%s detail=%s",
+                    client.__class__.__name__,
+                    candidate_query,
+                    getattr(client, "last_status", ""),
+                    getattr(client, "last_detail", ""),
+                )
+                break
         return []
 
     def _rank_results(
@@ -289,8 +365,11 @@ class LiteratureSearchAgent:
         library_scope: str,
         min_citation_count: int,
         prefer_high_impact: bool,
+        open_access_only: bool = False,
+        quality_tags: list[str] | None = None,
     ) -> list[dict]:
         all_keywords = [kw.lower() for kw in keywords_cn + keywords_en if kw.strip()]
+        quality_tags = quality_tags or []
         scored: list[dict] = []
 
         for paper in results:
@@ -298,6 +377,8 @@ class LiteratureSearchAgent:
             if not paper.title:
                 continue
             if paper.citation_count < min_citation_count:
+                continue
+            if open_access_only and not paper.is_open_access:
                 continue
 
             language = self._detect_language(paper)
@@ -307,6 +388,9 @@ class LiteratureSearchAgent:
                 continue
 
             relevance_score = self._estimate_relevance_score(paper, all_keywords)
+            # 有明确主题词时，完全不命中的高引用文献不应进入结果集。
+            if all_keywords and relevance_score <= 0:
+                continue
             freshness_score = self._estimate_freshness_score(paper.year, year_from, year_to)
             impact_score = self._estimate_impact_score(paper.citation_count)
             quality_score = SOURCE_QUALITY_PRIOR.get(paper.source, 0.7)
@@ -327,6 +411,11 @@ class LiteratureSearchAgent:
                 )
 
             quality_flags = self._build_quality_flags(paper, language)
+            quality_inference = self._build_quality_inference(paper)
+            if quality_tags:
+                normalized_tags = {tag.strip().lower() for tag in quality_tags if tag and tag.strip()}
+                if normalized_tags and not normalized_tags.issubset(set(quality_inference)):
+                    continue
             why_selected = self._build_selection_reason(
                 paper=paper,
                 relevance_score=relevance_score,
@@ -344,6 +433,7 @@ class LiteratureSearchAgent:
                 "quality_score": round(quality_score, 4),
                 "final_score": round(final_score, 4),
                 "quality_flags": quality_flags,
+                "quality_inference": quality_inference,
                 "why_selected": why_selected,
             })
 
@@ -406,9 +496,13 @@ class LiteratureSearchAgent:
         # 3. 再补英文与总体高分结果
         add_items(cn_results, max_count=3)
         available_sources = []
-        for source in ("cnki", "cqvip", "semantic_scholar", "openalex"):
+        for source in ("cnki", "cqvip", "semantic_scholar", "openalex", "crossref", "arxiv"):
+            if source == "pubmed":
+                continue
             if any(item.get("paper") and item["paper"].source == source for item in ranked):
                 available_sources.append(source)
+        if any(item.get("paper") and item["paper"].source == "pubmed" for item in ranked):
+            available_sources.insert(0, "pubmed")
         for source in available_sources:
             if len(selected) >= limit:
                 break
@@ -469,6 +563,8 @@ class LiteratureSearchAgent:
                 library_scope="all",
                 min_citation_count=0,
                 prefer_high_impact=prefer_high_impact,
+                open_access_only=False,
+                quality_tags=[],
             )
             for item in ranked_candidates:
                 paper = item.get("paper")
@@ -523,8 +619,11 @@ class LiteratureSearchAgent:
         client_map = {
             "openalex": self.openalex,
             "semantic_scholar": self.semantic,
+            "pubmed": self.pubmed,
             "cnki": self.cnki,
             "cqvip": self.cqvip,
+            "crossref": self.crossref,
+            "arxiv": self.arxiv,
         }
         statuses: dict[str, dict] = {}
         for source in selected_sources:
@@ -544,15 +643,42 @@ class LiteratureSearchAgent:
 
     def _estimate_relevance_score(self, paper: PaperResult, keywords: list[str]) -> float:
         text = f"{paper.title or ''} {paper.abstract or ''}".lower()
+        title = (paper.title or "").lower()
         if not keywords:
             return 0.5
         hit_score = 0.0
         for kw in keywords:
+            kw = kw.strip().lower()
+            if not kw:
+                continue
             if kw in text:
                 hit_score += 1.0
-                if paper.title and kw in paper.title.lower():
+                if title and kw in title:
                     hit_score += 0.5
+                continue
+
+            fragment_hits = 0
+            for fragment in self._keyword_fragments(kw):
+                if fragment in text:
+                    fragment_hits += 1
+                    if fragment in title:
+                        hit_score += 0.1
+            if fragment_hits:
+                hit_score += min(0.75, fragment_hits * 0.25)
         return min(1.0, hit_score / max(2, len(keywords)))
+
+    def _keyword_fragments(self, keyword: str) -> list[str]:
+        """把长查询拆成可用于弱相关匹配的片段，避免完整句不命中导致误删。"""
+        fragments: set[str] = set()
+        for word in re.findall(r"[a-z0-9][a-z0-9-]{2,}", keyword.lower()):
+            if word not in {"and", "the", "for", "with", "from", "into"}:
+                fragments.add(word)
+
+        chinese_text = "".join(re.findall(r"[\u4e00-\u9fff]+", keyword))
+        for size in range(4, min(8, len(chinese_text)) + 1):
+            for index in range(0, len(chinese_text) - size + 1):
+                fragments.add(chinese_text[index:index + size])
+        return sorted(fragments, key=len, reverse=True)
 
     def _estimate_freshness_score(self, year: int | None, year_from: int, year_to: int) -> float:
         if not year:
@@ -581,13 +707,43 @@ class LiteratureSearchAgent:
             flags.append("知网")
         elif paper.source == "cqvip":
             flags.append("维普")
+        elif paper.source == "pubmed":
+            flags.append("PubMed")
         elif paper.source == "semantic_scholar":
             flags.append("Semantic Scholar")
         elif paper.source == "openalex":
             flags.append("OpenAlex")
+        elif paper.source == "crossref":
+            flags.append("Crossref")
+        elif paper.source == "arxiv":
+            flags.append("arXiv")
+        if paper.is_open_access:
+            flags.append("开放获取")
         if paper.year and paper.year >= 2024:
             flags.append("近两年")
         return flags
+
+    def _build_quality_inference(self, paper: PaperResult) -> list[str]:
+        text = " ".join(filter(None, [paper.venue or "", paper.title or "", paper.url or ""])).lower()
+        tags: list[str] = []
+        if "ieee" in text:
+            tags.append("ieee")
+        if "acm" in text or "association for computing machinery" in text:
+            tags.append("acm")
+        if paper.source == "pubmed":
+            tags.append("pubmed")
+        if paper.is_open_access:
+            tags.append("open_access")
+        # 第一版只做保守推断：明确命中关键词时才打标签
+        if "ei" in text and "ieee" not in text:
+            tags.append("ei")
+        if "jcr" in text:
+            tags.append("jcr")
+        if "中科院" in text:
+            tags.append("cas")
+        if "北大核心" in text or "中文核心" in text:
+            tags.append("pku_core")
+        return list(dict.fromkeys(tags))
 
     def _build_selection_reason(
         self,
@@ -607,7 +763,7 @@ class LiteratureSearchAgent:
             reasons.append("引用影响力较高")
         if freshness_score >= 0.7:
             reasons.append("发表时间较新")
-        if "知网" in quality_flags or "Semantic Scholar" in quality_flags:
+        if "知网" in quality_flags or "Semantic Scholar" in quality_flags or "Crossref" in quality_flags:
             reasons.append("来源可靠")
         return "；".join(reasons[:3]) or "作为补充证据纳入结果集"
 
@@ -623,6 +779,7 @@ class LiteratureSearchAgent:
             "url": paper.url,
             "citation_count": paper.citation_count,
             "source": paper.source,
+            "is_open_access": paper.is_open_access,
             "language": paper_info["language"],
             "relevance_score": paper_info["relevance_score"],
             "freshness_score": paper_info["freshness_score"],
@@ -630,6 +787,7 @@ class LiteratureSearchAgent:
             "quality_score": paper_info["quality_score"],
             "final_score": paper_info["final_score"],
             "quality_flags": paper_info["quality_flags"],
+            "quality_inference": paper_info.get("quality_inference", []),
             "why_selected": paper_info["why_selected"],
         }
 

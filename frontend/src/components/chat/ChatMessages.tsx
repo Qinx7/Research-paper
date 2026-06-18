@@ -161,6 +161,7 @@ function EvidenceResults({ evidence }: { evidence: SearchEvidenceBundle }) {
   const external = evidence.external_papers || [];
   const projectItems = evidence.project_context_items || [];
   const statuses = evidence.source_statuses || {};
+  const taskId = evidence.task_id || null;
   const hasEvidence = external.length > 0 || projectItems.length > 0;
 
   return (
@@ -173,8 +174,22 @@ function EvidenceResults({ evidence }: { evidence: SearchEvidenceBundle }) {
         <div className="h-px flex-1" style={{ background: CHAT_THEME.border }} />
       </div>
 
-      {Object.keys(statuses).length > 0 && (
+      {(taskId || Object.keys(statuses).length > 0) && (
         <div className="mb-3 flex flex-wrap gap-2">
+          {taskId && (
+            <span
+              className="rounded px-2 py-1 text-[11px]"
+              title={taskId}
+              style={{
+                background: CHAT_THEME.muted,
+                border: `1px solid ${CHAT_THEME.border}`,
+                color: CHAT_THEME.low,
+                fontFamily: "monospace",
+              }}
+            >
+              task · {taskId.slice(0, 8)}
+            </span>
+          )}
           {Object.entries(statuses).map(([source, info]) => (
             <span
               key={source}
@@ -489,16 +504,41 @@ function AnalysisContent({
 }
 
 function ProjectEvidenceCard({ item, index }: { item: ProjectContextItem; index: number }) {
+  const isPaperNote = item.kind === "paper_note";
+  const isProjectPaper = item.kind === "project_paper";
+  const projectPaperMeta = [item.venue, item.year ? String(item.year) : null, item.source ? SOURCE_LABELS[item.source] || item.source : null]
+    .filter(Boolean)
+    .join(" · ");
+
   return (
     <article
       className="rounded-xl px-4 py-3"
       style={{ background: CHAT_THEME.successSoft, border: `1px solid rgba(46,107,91,0.22)` }}
     >
       <p className="text-[12.5px] font-medium leading-5" style={{ color: CHAT_THEME.text }}>
-        [P{index}] {item.kind} · {item.title}
+        [P{index}] {isPaperNote ? "内部证据卡片" : isProjectPaper ? "项目文献" : item.kind} · {item.title}
       </p>
+      {isPaperNote && (
+        <div className="mt-2 flex flex-wrap gap-1.5">
+          {item.note_type && <MetaChip>{noteTypeLabel(item.note_type)}</MetaChip>}
+          {item.source_title && <MetaChip>{item.source_title}</MetaChip>}
+          {typeof item.confidence === "number" && <MetaChip>可信度 {item.confidence}/100</MetaChip>}
+          {(item.score_reasons || []).slice(0, 3).map((reason) => (
+            <MetaChip key={reason}>{reason}</MetaChip>
+          ))}
+        </div>
+      )}
+      {isProjectPaper && (
+        <div className="mt-2 flex flex-wrap gap-1.5">
+          {projectPaperMeta && <MetaChip>{projectPaperMeta}</MetaChip>}
+          {typeof item.citation_count === "number" && <MetaChip>引用 {item.citation_count}</MetaChip>}
+          {(item.score_reasons || []).slice(0, 3).map((reason) => (
+            <MetaChip key={reason}>{reason}</MetaChip>
+          ))}
+        </div>
+      )}
       <p className="mt-1.5 line-clamp-3 text-[11px] leading-5" style={{ color: CHAT_THEME.mid }}>
-        {item.content_excerpt}
+        {isPaperNote ? item.evidence_text || item.content_excerpt : item.content_excerpt}
       </p>
       {item.action_url && (
         <a
@@ -513,6 +553,18 @@ function ProjectEvidenceCard({ item, index }: { item: ProjectContextItem; index:
       )}
     </article>
   );
+}
+
+function noteTypeLabel(type: string) {
+  const labels: Record<string, string> = {
+    summary: "摘要笔记",
+    quote: "原文摘录",
+    method: "方法",
+    finding: "发现",
+    limitation: "局限",
+    idea: "想法",
+  };
+  return labels[type] || type;
 }
 
 function MessageBubble({ children }: { children: ReactNode }) {

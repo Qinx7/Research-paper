@@ -43,6 +43,9 @@ class Settings(BaseSettings):
     CQVIP_HEADLESS: bool = True
     CQVIP_TIMEOUT: int = 30
     CQVIP_ENABLED: bool = False
+    SCRAPLING_CQVIP_ENABLED: bool = False
+    SCRAPLING_CQVIP_TIMEOUT: int = 40
+    SCRAPLING_CQVIP_FALLBACK_ON_EMPTY: bool = True
 
     MAX_UPLOAD_SIZE: int = 50 * 1024 * 1024
 

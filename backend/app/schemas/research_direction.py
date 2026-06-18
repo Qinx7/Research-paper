@@ -27,6 +27,14 @@ class GenerateDirectionsRequest(BaseModel):
     project_id: UUID | None = None
 
 
+class SaveDirectionRequest(BaseModel):
+    """保存前端已生成并选中的单个研究方向。"""
+
+    direction: dict = {}
+    score: dict | None = {}
+    project_id: UUID
+
+
 class GenerateDesignRequest(BaseModel):
     direction: dict = {}
     literature_analysis: dict | None = {}

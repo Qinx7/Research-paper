@@ -338,6 +338,27 @@ export default function PaperWorkflow({ projectId, onBack }: Props) {
     }
   };
 
+  const handleDownloadDraft = async () => {
+    if (!activeDraft) return;
+    try {
+      await api.downloadWithAuth(
+        api.getDraftDownloadUrl(activeDraft.id, downloadFormat),
+        `${activeDraft.title || "draft"}.${downloadFormat}`,
+      );
+    } catch {
+      setError("导出失败");
+    }
+  };
+
+  const handleDownloadDefensePPT = async () => {
+    if (!pptResult?.download_url) return;
+    try {
+      await api.downloadWithAuth(pptResult.download_url, pptResult.filename || "defense.pptx");
+    } catch {
+      setError("PPT 下载失败");
+    }
+  };
+
   const handleAiDeepCheck = async (chapterKey: string) => {
     if (!activeDraft) return;
     setComplianceAiLoading((prev) => new Set(prev).add(chapterKey));
@@ -668,14 +689,12 @@ export default function PaperWorkflow({ projectId, onBack }: Props) {
                           <button className="flex-1 rounded-lg border border-[#ddd4c4] bg-[#ede8da] py-1.5 text-center text-xs font-medium text-[#1a1612]">
                             建议
                           </button>
-                          <a
-                            href={api.getDraftDownloadUrl(activeDraft.id, downloadFormat)}
-                            target="_blank"
-                            rel="noreferrer"
+                          <button
+                            onClick={handleDownloadDraft}
                             className="rounded-lg bg-[#ddd8c8] px-3 py-1.5 text-xs text-[#5c5242]"
                           >
                             导出
-                          </a>
+                          </button>
                         </div>
 
                         <div className="flex-1 overflow-y-auto px-3 py-3" style={{ scrollbarWidth: "none" }}>
@@ -855,14 +874,12 @@ export default function PaperWorkflow({ projectId, onBack }: Props) {
                     )}
                   </div>
                   {pptResult.download_url && (
-                    <a
-                      href={`http://127.0.0.1:8000${pptResult.download_url}`}
+                    <button
+                      onClick={handleDownloadDefensePPT}
                       className="inline-block mt-3 px-5 py-2 bg-green-600 text-white rounded-lg text-sm hover:bg-green-700"
-                      target="_blank"
-                      rel="noreferrer"
                     >
                       下载 PPTX
-                    </a>
+                    </button>
                   )}
                 </div>
               )}

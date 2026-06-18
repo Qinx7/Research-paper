@@ -9,8 +9,11 @@ interface ChatEvidenceRailProps {
 }
 
 const sourceLabels: Record<string, string> = {
+  pubmed: "PubMed",
   openalex: "OpenAlex",
   semantic_scholar: "Semantic Scholar",
+  crossref: "Crossref",
+  arxiv: "arXiv",
   cnki: "CNKI",
   cqvip: "维普",
 };
@@ -19,7 +22,8 @@ export default function ChatEvidenceRail({ evidence, isStreaming, statusText }: 
   const external = evidence?.external_papers || [];
   const projectItems = evidence?.project_context_items || [];
   const statuses = evidence?.source_statuses || {};
-  const hasEvidence = external.length > 0 || projectItems.length > 0 || Object.keys(statuses).length > 0;
+  const taskId = evidence?.task_id || null;
+  const hasEvidence = external.length > 0 || projectItems.length > 0 || Object.keys(statuses).length > 0 || Boolean(taskId);
 
   return (
     <aside className="hidden xl:flex w-[360px] shrink-0 flex-col border-l border-slate-200 bg-white">
@@ -30,6 +34,11 @@ export default function ChatEvidenceRail({ evidence, isStreaming, statusText }: 
               Evidence Monitor
             </p>
             <h2 className="mt-1 text-base font-semibold text-slate-950">检索依据</h2>
+            {taskId ? (
+              <p className="mt-1 font-mono text-[10px] uppercase tracking-[0.14em] text-slate-400" title={taskId}>
+                task · {taskId.slice(0, 8)}
+              </p>
+            ) : null}
           </div>
           <span className={`h-2.5 w-2.5 rounded-full ${isStreaming ? "bg-cyan-500" : "bg-slate-300"}`} />
         </div>
@@ -106,15 +115,31 @@ function PaperPanel({ papers }: { papers: SearchResultItem[] }) {
             <article key={`${paper.title}-${index}`} className="border border-slate-200 bg-slate-50/70 p-3">
               <div className="flex items-start justify-between gap-3">
                 <p className="text-xs font-semibold leading-5 text-slate-900">[{index + 1}] {paper.title}</p>
-                <span className="shrink-0 border border-cyan-200 bg-cyan-50 px-2 py-0.5 text-[10px] font-medium text-cyan-700">
-                  {sourceLabels[paper.source] || paper.source}
-                </span>
+                <div className="flex shrink-0 flex-wrap justify-end gap-1">
+                  <span className="border border-cyan-200 bg-cyan-50 px-2 py-0.5 text-[10px] font-medium text-cyan-700">
+                    {sourceLabels[paper.source] || paper.source}
+                  </span>
+                  {paper.is_open_access ? (
+                    <span className="border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[10px] font-medium text-emerald-700">
+                      开放获取
+                    </span>
+                  ) : null}
+                </div>
               </div>
               <p className="mt-2 line-clamp-2 text-[11px] leading-5 text-slate-500">
                 {(paper.authors || []).slice(0, 3).join("，") || "未知作者"}
                 {paper.year ? ` · ${paper.year}` : ""}
                 {paper.venue ? ` · ${paper.venue}` : ""}
               </p>
+              {paper.quality_flags?.length ? (
+                <div className="mt-2 flex flex-wrap gap-1.5">
+                  {paper.quality_flags.slice(0, 4).map((flag) => (
+                    <span key={flag} className="rounded border border-slate-200 bg-white px-1.5 py-0.5 text-[10px] text-slate-600">
+                      {flag}
+                    </span>
+                  ))}
+                </div>
+              ) : null}
               <div className="mt-2 flex items-center justify-between text-[11px] text-slate-500">
                 <span>被引 {paper.citation_count ?? 0}</span>
                 {paper.url && (
@@ -141,8 +166,33 @@ function ProjectPanel({ items }: { items: ProjectContextItem[] }) {
         <div className="mt-3 space-y-3">
           {items.slice(0, 5).map((item, index) => (
             <article key={`${item.title}-${index}`} className="border border-emerald-200 bg-emerald-50/60 p-3">
-              <p className="text-xs font-semibold leading-5 text-slate-900">[P{index + 1}] {item.kind} · {item.title}</p>
-              <p className="mt-2 line-clamp-3 text-[11px] leading-5 text-slate-600">{item.content_excerpt}</p>
+              <p className="text-xs font-semibold leading-5 text-slate-900">
+                [P{index + 1}] {item.kind === "paper_note" ? "内部证据卡片" : item.kind === "project_paper" ? "项目文献" : item.kind} · {item.title}
+              </p>
+              {item.kind === "paper_note" && (
+                <div className="mt-2 flex flex-wrap gap-1.5">
+                  {item.note_type && <EvidenceChip>{noteTypeLabel(item.note_type)}</EvidenceChip>}
+                  {item.source_title && <EvidenceChip>{item.source_title}</EvidenceChip>}
+                  {typeof item.confidence === "number" && <EvidenceChip>可信度 {item.confidence}/100</EvidenceChip>}
+                  {(item.score_reasons || []).slice(0, 3).map((reason) => (
+                    <EvidenceChip key={reason}>{reason}</EvidenceChip>
+                  ))}
+                </div>
+              )}
+              {item.kind === "project_paper" && (
+                <div className="mt-2 flex flex-wrap gap-1.5">
+                  {item.venue && <EvidenceChip>{item.venue}</EvidenceChip>}
+                  {item.year && <EvidenceChip>{String(item.year)}</EvidenceChip>}
+                  {item.source && <EvidenceChip>{sourceLabels[item.source] || item.source}</EvidenceChip>}
+                  {typeof item.citation_count === "number" && <EvidenceChip>引用 {item.citation_count}</EvidenceChip>}
+                  {(item.score_reasons || []).slice(0, 3).map((reason) => (
+                    <EvidenceChip key={reason}>{reason}</EvidenceChip>
+                  ))}
+                </div>
+              )}
+              <p className="mt-2 line-clamp-3 text-[11px] leading-5 text-slate-600">
+                {item.kind === "paper_note" ? item.evidence_text || item.content_excerpt : item.content_excerpt}
+              </p>
               {item.action_url && (
                 <a
                   href={item.action_url.startsWith("/api/") ? `http://127.0.0.1:8000${item.action_url}` : item.action_url}
@@ -159,6 +209,26 @@ function ProjectPanel({ items }: { items: ProjectContextItem[] }) {
       )}
     </section>
   );
+}
+
+function EvidenceChip({ children }: { children: React.ReactNode }) {
+  return (
+    <span className="rounded border border-emerald-200 bg-white/70 px-1.5 py-0.5 text-[10px] font-medium text-emerald-800">
+      {children}
+    </span>
+  );
+}
+
+function noteTypeLabel(type: string) {
+  const labels: Record<string, string> = {
+    summary: "摘要笔记",
+    quote: "原文摘录",
+    method: "方法",
+    finding: "发现",
+    limitation: "局限",
+    idea: "想法",
+  };
+  return labels[type] || type;
 }
 
 function SectionTitle({ title, count }: { title: string; count?: number }) {

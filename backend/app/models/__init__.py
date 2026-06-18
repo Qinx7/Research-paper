@@ -9,5 +9,8 @@ from .outcome import Outcome
 from .draft import Draft
 from .zotero_sync import ZoteroSync
 from .user import User
+from .paper_note import PaperNote
+from .literature_search_task import LiteratureSearchTask
+from .generated_artifact import GeneratedArtifact
 
-__all__ = ["Project", "Paper", "ResearchDirection", "ProjectDesign", "Conversation", "Message", "Proposal", "Outcome", "Draft", "ZoteroSync", "User"]
+__all__ = ["Project", "Paper", "ResearchDirection", "ProjectDesign", "Conversation", "Message", "Proposal", "Outcome", "Draft", "ZoteroSync", "User", "PaperNote", "LiteratureSearchTask", "GeneratedArtifact"]

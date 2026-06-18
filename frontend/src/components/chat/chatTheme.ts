@@ -21,8 +21,11 @@ export const CHAT_THEME = {
 };
 
 export const SOURCE_LABELS: Record<string, string> = {
+  pubmed: "PubMed",
   openalex: "OpenAlex",
   semantic_scholar: "Semantic Scholar",
+  crossref: "Crossref",
+  arxiv: "arXiv",
   cnki: "CNKI",
   cqvip: "维普",
 };

@@ -59,6 +59,8 @@ type DesignContent = {
 };
 
 type RightPanelTab = "suggestions" | "references" | "delivery";
+type PageZoom = 90 | 100 | 110;
+type PageWidthMode = "standard" | "wide";
 
 export default function WritingPage() {
   const router = useRouter();
@@ -81,6 +83,8 @@ export default function WritingPage() {
   const [outcomes, setOutcomes] = useState<Outcome[]>([]);
   const [defenseOutline, setDefenseOutline] = useState<DefensePPTOutline | null>(null);
   const [rightTab, setRightTab] = useState<RightPanelTab>("suggestions");
+  const [pageZoom, setPageZoom] = useState<PageZoom>(100);
+  const [pageWidthMode, setPageWidthMode] = useState<PageWidthMode>("standard");
   const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -168,10 +172,24 @@ export default function WritingPage() {
   const progress = Math.round((completedCount / CHAPTER_KEYS.length) * 100);
   const currentTitle = activeSection?.title || FALLBACK_CHAPTERS[activeChapterKey] || "章节";
   const isDirty = activeSection ? editorContent !== activeSection.content : Boolean(editorContent);
-  const references = [
-    ...(designContent?.references || []),
-    ...((activeDraft?.references || []).map((reference) => JSON.stringify(reference))),
-  ].filter(Boolean);
+  const designReferences = designContent?.references || [];
+  const draftReferences = (activeDraft?.references || []).map(formatDraftReference).filter(Boolean);
+  const references = [...designReferences, ...draftReferences].filter(Boolean);
+  const hasDesign = Boolean(latestDesign);
+  const hasOutcomes = outcomes.length > 0;
+  const hasReferences = references.length > 0;
+  const isResultSensitiveChapter = ["chapter_4_implementation", "chapter_5_experiment"].includes(activeChapterKey);
+  const chapterSuggestions = getChapterSuggestions(activeChapterKey, hasOutcomes);
+  const evidenceReadyCount = [hasDesign, hasOutcomes, hasReferences].filter(Boolean).length;
+  const saveStateLabel = saving ? "保存中" : isDirty ? "未保存" : "已同步";
+  const pageMaxWidth = pageWidthMode === "wide" ? 940 : 820;
+  const workspaceMaxWidth = pageWidthMode === "wide" ? 1020 : 900;
+  const evidenceBadges = [
+    { label: hasDesign ? "有项目设计" : "缺项目设计", tone: hasDesign ? "good" : "warn" },
+    { label: hasOutcomes ? "有成果材料" : "缺成果材料", tone: hasOutcomes ? "good" : "warn" },
+    { label: hasReferences ? "有引用依据" : "缺引用依据", tone: hasReferences ? "good" : "warn" },
+    ...(isResultSensitiveChapter ? [{ label: "结果章节需真实数据", tone: "warn" }] : []),
+  ] as { label: string; tone: "good" | "warn" }[];
 
   const loadDraftById = useCallback(async (draftId: string) => {
     setDraftLoading(true);
@@ -212,7 +230,7 @@ export default function WritingPage() {
     }
   };
 
-  const handleSave = async () => {
+  const handleSave = useCallback(async () => {
     if (!activeDraft) return;
     setSaving(true);
     setError(null);
@@ -232,7 +250,19 @@ export default function WritingPage() {
     } finally {
       setSaving(false);
     }
-  };
+  }, [activeDraft, activeChapterKey, currentTitle, editorContent]);
+
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (!(event.ctrlKey || event.metaKey) || event.key.toLowerCase() !== "s") return;
+      event.preventDefault();
+      if (!activeDraft || saving) return;
+      void handleSave();
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [activeDraft, saving, handleSave]);
 
   const handleGenerateChapter = async () => {
     if (!activeDraft) return;
@@ -290,8 +320,6 @@ export default function WritingPage() {
     }
   };
 
-  const sidebarNoop = () => {};
-
   if (authLoading || loading) {
     return <CenteredState title="正在加载论文写作..." description="正在读取项目、草稿和写作上下文。" />;
   }
@@ -313,13 +341,14 @@ export default function WritingPage() {
         activeModule="writing"
         currentId={null}
         onSelect={(_id: string, _messages: ChatMessage[]) => {}}
-        onNewChat={() => router.push("/chat")}
+        onNewChat={() => router.push("/")}
         onOpenSettings={() => setSettingsOpen(true)}
         refreshKey={0}
+        searchEntryMode="home"
       />
 
-      <main className="grid min-w-0 flex-1 grid-cols-[260px_minmax(0,1fr)_280px]">
-        <aside className="flex min-h-0 flex-col border-r" style={{ background: CHAT_THEME.card, borderColor: CHAT_THEME.border }}>
+      <main className="grid min-w-0 flex-1 grid-cols-1 lg:grid-cols-[240px_minmax(0,1fr)] xl:grid-cols-[240px_minmax(0,1fr)_280px] 2xl:grid-cols-[260px_minmax(0,1fr)_280px]">
+        <aside className="hidden min-h-0 flex-col border-r lg:flex" style={{ background: CHAT_THEME.card, borderColor: CHAT_THEME.border }}>
           <div className="border-b px-5 py-5" style={{ borderColor: CHAT_THEME.border }}>
             <h1 className="text-[20px] font-semibold leading-tight" style={{ fontFamily: "var(--font-cormorant), serif" }}>
               论文写作
@@ -432,43 +461,60 @@ export default function WritingPage() {
         </aside>
 
         <section className="flex min-h-0 flex-col">
-          <header className="flex h-14 shrink-0 items-center justify-between border-b px-7" style={{ background: CHAT_THEME.card, borderColor: CHAT_THEME.border }}>
-            <div className="flex min-w-0 items-center gap-2 text-xs" style={{ color: CHAT_THEME.mid }}>
-              <span>论文草稿</span>
-              <span>›</span>
-              <span className="truncate font-medium" style={{ color: CHAT_THEME.text }}>
-                {currentTitle}
-              </span>
-              {generating && (
-                <span className="rounded px-2 py-0.5" style={{ background: CHAT_THEME.primarySoft, color: CHAT_THEME.primary }}>
-                  AI 生成中
-                </span>
-              )}
-              {isDirty && (
-                <span className="rounded px-2 py-0.5" style={{ background: CHAT_THEME.warnSoft, color: CHAT_THEME.warn }}>
-                  未保存
-                </span>
-              )}
+          <header
+            className="grid min-h-16 shrink-0 grid-cols-1 items-center gap-3 border-b px-4 py-3 sm:grid-cols-[minmax(0,1fr)_auto] lg:grid-cols-[minmax(0,1fr)_auto_auto] lg:px-7"
+            style={{ background: CHAT_THEME.card, borderColor: CHAT_THEME.border }}
+          >
+            <div className="min-w-0">
+              <div className="truncate text-sm font-semibold" style={{ color: CHAT_THEME.text }}>
+                {activeDraft?.title || "论文草稿"}
+              </div>
+              <div className="mt-1 flex min-w-0 items-center gap-2 text-xs" style={{ color: CHAT_THEME.mid }}>
+                <span className="truncate">{currentTitle}</span>
+                <span>·</span>
+                <span>{formatSectionStatus(activeSection?.status)}</span>
+              </div>
             </div>
 
-            <div className="flex items-center gap-2">
-              <FormatButton label="B" title="加粗（视觉占位）" />
-              <FormatButton label="I" title="斜体（视觉占位）" />
-              <FormatButton label="≡" title="段落（视觉占位）" />
-              <span className="mx-1 h-5 w-px" style={{ background: CHAT_THEME.border }} />
-              <ToolbarButton label="改写" onClick={sidebarNoop} muted />
+            <div className="hidden items-center gap-2 lg:flex">
+              <StatusPill label={saveStateLabel} tone={isDirty ? "warn" : "good"} />
+              <StatusPill label={`进度 ${progress}%`} />
+              {generating && <StatusPill label="AI 生成中" tone="good" />}
+            </div>
+
+            <div className="flex items-center gap-2 sm:justify-end">
+              <SegmentedControl<PageWidthMode>
+                value={pageWidthMode}
+                options={[
+                  { label: "标准", value: "standard" },
+                  { label: "宽版", value: "wide" },
+                ]}
+                onChange={setPageWidthMode}
+              />
+              <SegmentedControl<PageZoom>
+                value={pageZoom}
+                options={[
+                  { label: "90%", value: 90 },
+                  { label: "100%", value: 100 },
+                  { label: "110%", value: 110 },
+                ]}
+                onChange={setPageZoom}
+              />
               <ToolbarButton label="续写" onClick={handleGenerateChapter} disabled={!activeDraft || generating} />
               <ToolbarButton label="复制" onClick={handleCopy} muted />
             </div>
           </header>
 
-          <div className="min-h-0 flex-1 overflow-y-auto px-12 py-10" style={{ scrollbarWidth: "none" }}>
+          <div
+            className="min-h-0 flex-1 overflow-y-auto px-3 py-5 sm:px-5 lg:px-8 lg:py-8"
+            style={{ background: "#e9e4da", scrollbarWidth: "none" }}
+          >
             {projects.length === 0 ? (
               <EmptyCanvas
                 title="还没有研究项目"
                 description="请先从文献搜索或完整研究流程创建一个项目，再进入论文写作。"
-                actionLabel="返回文献搜索"
-                onAction={() => router.push("/chat")}
+                actionLabel="返回首页"
+                onAction={() => router.push("/")}
               />
             ) : !activeDraft ? (
               <EmptyCanvas
@@ -478,39 +524,76 @@ export default function WritingPage() {
                 onAction={handleNewDraft}
               />
             ) : (
-              <article className="mx-auto max-w-[760px]">
-                <div className="mb-6 flex items-start justify-between gap-4">
-                  <div>
-                    <h2 className="text-[28px] font-semibold" style={{ fontFamily: "var(--font-cormorant), serif" }}>
-                      {currentTitle}
-                    </h2>
-                    <p className="mt-2 text-xs" style={{ color: CHAT_THEME.mid }}>
-                      {activeDraft.title} · {formatSectionStatus(activeSection?.status)}
-                    </p>
+              <div className="mx-auto flex w-full flex-col items-center" style={{ maxWidth: workspaceMaxWidth }}>
+                <DocumentRuler maxWidth={pageMaxWidth} />
+                <article
+                  className="min-h-[760px] w-full origin-top border px-5 py-7 shadow-[0_18px_45px_rgba(54,43,29,0.18)] sm:px-9 sm:py-9 lg:min-h-[1040px] lg:px-16 lg:py-14"
+                  style={{
+                    maxWidth: pageMaxWidth,
+                    transform: `scale(${pageZoom / 100})`,
+                    marginBottom: `${(pageZoom - 100) * 8}px`,
+                    background: "#fffdf8",
+                    borderColor: "rgba(73, 62, 44, 0.18)",
+                  }}
+                >
+                  <div className="mb-8 flex flex-col gap-4 border-b pb-6 sm:flex-row sm:items-start sm:justify-between sm:gap-6" style={{ borderColor: "rgba(73, 62, 44, 0.14)" }}>
+                    <div className="min-w-0">
+                      <h2 className="text-[30px] font-semibold leading-tight" style={{ fontFamily: "var(--font-cormorant), serif" }}>
+                        {currentTitle}
+                      </h2>
+                      <p className="mt-2 text-xs" style={{ color: CHAT_THEME.mid }}>
+                        {activeDraft.title} · {formatSectionStatus(activeSection?.status)}
+                      </p>
+                      <div className="mt-3 flex flex-wrap gap-2">
+                        {evidenceBadges.map((badge) => (
+                          <EvidenceBadge key={badge.label} label={badge.label} tone={badge.tone} />
+                        ))}
+                      </div>
+                      {isResultSensitiveChapter && !hasOutcomes && (
+                        <p
+                          className="mt-3 max-w-2xl rounded-lg px-3 py-2 text-[12px] leading-6"
+                          style={{ background: CHAT_THEME.warnSoft, color: CHAT_THEME.warn, border: `1px solid rgba(160, 92, 35, 0.2)` }}
+                        >
+                          当前缺少真实成果材料，本章只应生成系统设计、实验方案或待验证描述，不应生成实验结果、性能结论或具体统计数据。
+                        </p>
+                      )}
+                    </div>
+                    <span className="shrink-0 text-xs" style={{ color: CHAT_THEME.mid }}>
+                      {wordCount} 字
+                    </span>
                   </div>
-                  <span className="text-xs" style={{ color: CHAT_THEME.mid }}>
-                    {wordCount} 字
-                  </span>
+
+                  <textarea
+                    value={editorContent}
+                    onChange={(event) => setEditorContent(event.target.value)}
+                    placeholder="在这里编辑当前章节。也可以点击右上角“续写”让 AI 基于项目资料生成本章内容。"
+                    className="min-h-[540px] w-full resize-none bg-transparent text-[15px] leading-8 outline-none sm:min-h-[640px] sm:text-[16px] lg:min-h-[760px]"
+                    style={{ color: CHAT_THEME.text, fontFamily: "Georgia, 'Times New Roman', 'Noto Serif SC', serif" }}
+                  />
+                </article>
+
+                <div
+                  className="mt-3 flex w-full flex-wrap items-center justify-between gap-3 rounded-lg px-4 py-2 text-[11px]"
+                  style={{ maxWidth: pageMaxWidth, background: "rgba(255, 253, 248, 0.82)", color: CHAT_THEME.mid, border: `1px solid rgba(73, 62, 44, 0.12)` }}
+                >
+                  <span>页面视图</span>
+                  <span>{wordCount} 字</span>
+                  <span>进度 {progress}%</span>
+                  <span>{pageZoom}%</span>
+                  <span>{formatSectionStatus(activeSection?.status)}</span>
+                  <span>证据 {evidenceReadyCount}/3</span>
+                  <span>{saveStateLabel}</span>
+                  <span>Ctrl+S 保存</span>
                 </div>
-
-                <div className="mb-6 h-px" style={{ background: CHAT_THEME.border }} />
-
-                <textarea
-                  value={editorContent}
-                  onChange={(event) => setEditorContent(event.target.value)}
-                  placeholder="在这里编辑当前章节。也可以点击右上角“续写”让 AI 基于项目资料生成本章内容。"
-                  className="min-h-[560px] w-full resize-none bg-transparent text-[16px] leading-9 outline-none"
-                  style={{ color: CHAT_THEME.text }}
-                />
-              </article>
+              </div>
             )}
           </div>
 
-          <footer className="flex h-14 shrink-0 items-center justify-between border-t px-7" style={{ background: CHAT_THEME.card, borderColor: CHAT_THEME.border }}>
+          <footer className="flex min-h-14 shrink-0 flex-col gap-3 border-t px-4 py-3 sm:flex-row sm:items-center sm:justify-between lg:px-7" style={{ background: CHAT_THEME.card, borderColor: CHAT_THEME.border }}>
             <div className="text-xs" style={{ color: error ? "#9a2f2f" : CHAT_THEME.mid }}>
               {error || notice || "编辑后请保存当前章节"}
             </div>
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               {activeDraft && (
                 <a
                   href={getDraftDownloadUrl(activeDraft.id, "docx")}
@@ -535,7 +618,7 @@ export default function WritingPage() {
           </footer>
         </section>
 
-        <aside className="flex min-h-0 flex-col border-l" style={{ background: CHAT_THEME.card, borderColor: CHAT_THEME.border }}>
+        <aside className="hidden min-h-0 flex-col border-l xl:flex" style={{ background: CHAT_THEME.card, borderColor: CHAT_THEME.border }}>
           <div className="flex h-14 shrink-0 items-center gap-2 border-b px-4" style={{ borderColor: CHAT_THEME.border }}>
             <PanelTabButton label="建议" active={rightTab === "suggestions"} onClick={() => setRightTab("suggestions")} />
             <PanelTabButton label="引用" active={rightTab === "references"} onClick={() => setRightTab("references")} />
@@ -546,9 +629,9 @@ export default function WritingPage() {
             {rightTab === "suggestions" && (
               <>
                 <SidePanel title="AI 写作建议">
-                  <Suggestion text="补充与当前章节直接相关的项目成果、实验记录或检索依据。" />
-                  <Suggestion text="避免编造统计数值、实验结果和不存在的参考文献。" />
-                  <Suggestion text="每一段结论最好能对应文献依据或项目材料。" />
+                  {chapterSuggestions.map((text) => (
+                    <Suggestion key={text} text={text} />
+                  ))}
                 </SidePanel>
 
                 <SidePanel title="生成与检查">
@@ -581,18 +664,35 @@ export default function WritingPage() {
 
             {rightTab === "references" && (
               <>
-                <SidePanel title="关联文献">
+                <SidePanel title="项目设计依据">
                   {latestDesign?.topic && (
-                    <p className="mb-3 text-[12px] leading-6" style={{ color: CHAT_THEME.text }}>{latestDesign.topic}</p>
+                    <p className="mb-3 text-[12px] leading-6" style={{ color: CHAT_THEME.text }}>
+                      {latestDesign.topic}
+                    </p>
                   )}
-                  {references.slice(0, 8).map((reference, index) => (
-                    <div key={`${reference}-${index}`} className="mb-2 rounded-lg px-3 py-2 text-[11px] leading-5" style={{ background: CHAT_THEME.bg, color: CHAT_THEME.mid }}>
-                      [{index + 1}] {reference}
-                    </div>
+                  {(designContent?.research_questions || []).slice(0, 3).map((item, index) => (
+                    <ReferenceItem key={`question-${index}`} prefix="问题" text={item} />
                   ))}
-                  {references.length === 0 && (
+                  {(designContent?.methods || []).slice(0, 3).map((item, index) => (
+                    <ReferenceItem key={`method-${index}`} prefix="方法" text={item} />
+                  ))}
+                  {designReferences.slice(0, 5).map((reference, index) => (
+                    <ReferenceItem key={`${reference}-${index}`} prefix={`文献 ${index + 1}`} text={reference} />
+                  ))}
+                  {!latestDesign && (
                     <p className="text-[12px] leading-6" style={{ color: CHAT_THEME.mid }}>
-                      暂无可展示引用。可先在文献搜索中检索并沉淀项目依据。
+                      暂无项目设计。可先完成研究方向和项目设计后，再作为论文写作依据。
+                    </p>
+                  )}
+                </SidePanel>
+
+                <SidePanel title="草稿引用">
+                  {draftReferences.slice(0, 6).map((reference, index) => (
+                    <ReferenceItem key={`${reference}-${index}`} prefix={`引用 ${index + 1}`} text={reference} />
+                  ))}
+                  {draftReferences.length === 0 && (
+                    <p className="text-[12px] leading-6" style={{ color: CHAT_THEME.mid }}>
+                      当前草稿暂无引用记录。可先在文献搜索中保存文献，或在后续生成章节时沉淀引用。
                     </p>
                   )}
                 </SidePanel>
@@ -600,12 +700,21 @@ export default function WritingPage() {
                 <SidePanel title="项目成果">
                   <StatLine label="成果材料" value={`${outcomes.length} 项`} />
                   {outcomes.slice(0, 5).map((outcome) => (
-                    <div key={outcome.id} className="mb-2 rounded-lg px-3 py-2 text-[11px]" style={{ background: CHAT_THEME.bg, color: CHAT_THEME.text }}>
+                    <div key={outcome.id} className="mb-2 rounded-lg px-3 py-2 text-[11px] leading-5" style={{ background: CHAT_THEME.bg, color: CHAT_THEME.text }}>
                       <div className="font-medium">{outcome.name}</div>
                       <div className="mt-1" style={{ color: CHAT_THEME.low }}>{outcome.outcome_type}</div>
+                      {outcome.description && (
+                        <div className="mt-1" style={{ color: CHAT_THEME.mid }}>
+                          {outcome.description}
+                        </div>
+                      )}
                     </div>
                   ))}
-                  {outcomes.length === 0 && <p className="text-[12px] leading-6" style={{ color: CHAT_THEME.mid }}>暂无成果材料。</p>}
+                  {outcomes.length === 0 && (
+                    <p className="text-[12px] leading-6" style={{ color: CHAT_THEME.mid }}>
+                      暂无成果材料。涉及实现、实验和结果章节前，建议先上传实验记录、截图、数据表或系统成果。
+                    </p>
+                  )}
                 </SidePanel>
               </>
             )}
@@ -616,7 +725,21 @@ export default function WritingPage() {
                   <StatLine label="草稿进度" value={`${progress}%`} />
                   <StatLine label="当前章节" value={formatSectionStatus(activeSection?.status)} />
                   <StatLine label="成果材料" value={`${outcomes.length} 项`} />
+                  <StatLine label="合规检查" value={complianceResult ? `${complianceResult.overall_score} 分` : "尚未检查"} />
                   <StatLine label="答辩大纲" value={defenseOutline ? `${defenseOutline.total_slides} 页` : "待生成"} />
+                </SidePanel>
+
+                <SidePanel title="导出草稿">
+                  {activeDraft ? (
+                    <div className="grid grid-cols-2 gap-2">
+                      <DownloadLink href={getDraftDownloadUrl(activeDraft.id, "docx")} label="DOCX" />
+                      <DownloadLink href={getDraftDownloadUrl(activeDraft.id, "pdf")} label="PDF" />
+                    </div>
+                  ) : (
+                    <p className="text-[12px] leading-6" style={{ color: CHAT_THEME.mid }}>
+                      创建草稿后可导出 DOCX 或 PDF。
+                    </p>
+                  )}
                 </SidePanel>
 
                 <SidePanel title="答辩 PPT 大纲">
@@ -654,6 +777,53 @@ function getSection(draft: Draft, key: string) {
   return draft.sections.find((section) => section.key === key) ?? null;
 }
 
+function getChapterSuggestions(chapterKey: string, hasOutcomes: boolean) {
+  if (chapterKey === "chapter_1_introduction" || chapterKey === "chapter_2_theory") {
+    return [
+      "优先引用真实文献背景，避免把常识性判断写成已验证结论。",
+      "每个研究现状判断最好能对应至少一条文献依据。",
+      "不足和空白应来自文献对比，不要凭空扩大研究意义。",
+    ];
+  }
+
+  if (chapterKey === "chapter_3_design") {
+    return [
+      "围绕项目设计说明研究方法、技术路线和系统边界。",
+      "方法描述应能对应已有设计或可实现方案。",
+      "不要在方法章节提前给出尚未验证的实验结论。",
+    ];
+  }
+
+  if (chapterKey === "chapter_4_implementation" || chapterKey === "chapter_5_experiment") {
+    return hasOutcomes
+      ? [
+          "优先引用项目成果、截图、实验记录或真实数据。",
+          "涉及指标、数量、性能提升时必须能找到对应依据。",
+          "不确定的数据用待验证描述，不写成确定结论。",
+        ]
+      : [
+          "当前缺少成果材料，只适合写实现方案、实验设计或待验证内容。",
+          "不要生成准确率、耗时、样本量、提升比例等具体结果。",
+          "建议先上传实验记录、截图、数据表或系统成果。",
+        ];
+  }
+
+  return [
+    "总结应回扣研究目标和已完成内容。",
+    "限制部分应明确哪些结论尚未被真实数据验证。",
+    "展望不要写成已经完成的功能或实验结果。",
+  ];
+}
+
+function formatDraftReference(reference: Record<string, unknown>) {
+  const title = typeof reference.title === "string" ? reference.title : "";
+  const year = typeof reference.year === "number" || typeof reference.year === "string" ? ` (${reference.year})` : "";
+  const source = typeof reference.source === "string" ? ` · ${reference.source}` : "";
+  const doi = typeof reference.doi === "string" ? ` · DOI: ${reference.doi}` : "";
+  const url = typeof reference.url === "string" ? ` · ${reference.url}` : "";
+  return title ? `${title}${year}${source}${doi || url}` : JSON.stringify(reference);
+}
+
 function ToolbarButton({
   label,
   onClick,
@@ -682,16 +852,88 @@ function ToolbarButton({
   );
 }
 
-function FormatButton({ label, title }: { label: string; title: string }) {
+function SegmentedControl<T extends string | number>({
+  value,
+  options,
+  onChange,
+}: {
+  value: T;
+  options: { label: string; value: T }[];
+  onChange: (value: T) => void;
+}) {
   return (
-    <button
-      type="button"
-      className="grid h-8 w-8 place-items-center rounded-lg text-xs font-semibold"
-      style={{ background: CHAT_THEME.muted, color: CHAT_THEME.mid, border: `1px solid ${CHAT_THEME.border}` }}
-      title={title}
+    <div className="hidden rounded-lg p-0.5 lg:flex" style={{ background: CHAT_THEME.muted, border: `1px solid ${CHAT_THEME.border}` }}>
+      {options.map((option) => {
+        const active = option.value === value;
+        return (
+          <button
+            key={String(option.value)}
+            type="button"
+            onClick={() => onChange(option.value)}
+            className="rounded-md px-2.5 py-1.5 text-[11px] font-medium"
+            style={{
+              background: active ? CHAT_THEME.card : "transparent",
+              color: active ? CHAT_THEME.text : CHAT_THEME.mid,
+            }}
+          >
+            {option.label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+function StatusPill({ label, tone = "neutral" }: { label: string; tone?: "neutral" | "good" | "warn" }) {
+  const colorMap = {
+    neutral: { bg: CHAT_THEME.muted, text: CHAT_THEME.mid, border: CHAT_THEME.border },
+    good: { bg: CHAT_THEME.primarySoft, text: CHAT_THEME.primary, border: "rgba(24, 48, 29, 0.16)" },
+    warn: { bg: CHAT_THEME.warnSoft, text: CHAT_THEME.warn, border: "rgba(160, 92, 35, 0.2)" },
+  }[tone];
+
+  return (
+    <span
+      className="rounded-full px-2.5 py-1 text-[11px] font-medium"
+      style={{ background: colorMap.bg, color: colorMap.text, border: `1px solid ${colorMap.border}` }}
     >
       {label}
-    </button>
+    </span>
+  );
+}
+
+function DocumentRuler({ maxWidth }: { maxWidth: number }) {
+  return (
+    <div
+      className="mb-2 h-8 w-full overflow-hidden rounded-t-lg border px-4 sm:px-8 lg:px-10"
+      style={{ maxWidth, background: "#f8f4ea", borderColor: "rgba(73, 62, 44, 0.14)" }}
+    >
+      <div
+        className="h-full"
+        style={{
+          backgroundImage:
+            "repeating-linear-gradient(to right, rgba(73,62,44,0.28) 0 1px, transparent 1px 24px), repeating-linear-gradient(to right, rgba(73,62,44,0.46) 0 1px, transparent 1px 96px)",
+          backgroundPosition: "0 100%",
+          backgroundSize: "100% 10px, 100% 16px",
+          backgroundRepeat: "repeat-x",
+        }}
+      />
+    </div>
+  );
+}
+
+function EvidenceBadge({ label, tone }: { label: string; tone: "good" | "warn" }) {
+  const isWarn = tone === "warn";
+  return (
+    <span
+      className="rounded-full px-2.5 py-1 text-[11px] font-medium"
+      style={{
+        background: isWarn ? CHAT_THEME.warnSoft : CHAT_THEME.primarySoft,
+        color: isWarn ? CHAT_THEME.warn : CHAT_THEME.primary,
+        border: `1px solid ${isWarn ? "rgba(160, 92, 35, 0.2)" : "rgba(24, 48, 29, 0.16)"}`,
+      }}
+    >
+      {label}
+    </span>
   );
 }
 
@@ -766,6 +1008,29 @@ function Suggestion({ text }: { text: string }) {
     <div className="mb-2 rounded-lg px-3 py-2 text-[12px] leading-6 last:mb-0" style={{ background: CHAT_THEME.card, color: CHAT_THEME.text }}>
       {text}
     </div>
+  );
+}
+
+function ReferenceItem({ prefix, text }: { prefix: string; text: string }) {
+  return (
+    <div className="mb-2 rounded-lg px-3 py-2 text-[11px] leading-5" style={{ background: CHAT_THEME.bg, color: CHAT_THEME.mid }}>
+      <span className="font-medium" style={{ color: CHAT_THEME.text }}>{prefix}：</span>
+      {text}
+    </div>
+  );
+}
+
+function DownloadLink({ href, label }: { href: string; label: string }) {
+  return (
+    <a
+      href={href}
+      target="_blank"
+      rel="noreferrer"
+      className="rounded-lg px-3 py-2 text-center text-xs font-medium"
+      style={{ background: CHAT_THEME.bg, color: CHAT_THEME.text, border: `1px solid ${CHAT_THEME.border}` }}
+    >
+      {label}
+    </a>
   );
 }
 

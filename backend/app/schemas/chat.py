@@ -24,9 +24,17 @@ class SearchResultItem(BaseModel):
     url: str | None
     citation_count: int
     source: str
+    is_open_access: bool | None = None
+    quality_flags: list[str] = []
 
     class Config:
         from_attributes = True
+
+
+class SourceStatusInfo(BaseModel):
+    status: str
+    count: int
+    detail: str | None = None
 
 
 class ProjectContextItem(BaseModel):
@@ -35,14 +43,28 @@ class ProjectContextItem(BaseModel):
     title: str
     content_excerpt: str
     score: int
+    score_reasons: list[str] = []
+    note_type: str | None = None
+    evidence_text: str | None = None
+    evidence_level: str | None = None
+    confidence: int | None = None
+    source_title: str | None = None
+    tags: list[str] = []
+    citation_count: int | None = None
+    source: str | None = None
+    year: int | None = None
+    venue: str | None = None
+    authors: list[str] = []
     action_url: str | None = None
     action_label: str | None = None
 
 
 class SearchEvidenceBundle(BaseModel):
     """学术回答使用的证据包"""
+    task_id: str | None = None
     external_papers: list[SearchResultItem] = []
     project_context_items: list[ProjectContextItem] = []
+    source_statuses: dict[str, SourceStatusInfo] = {}
 
     class Config:
         from_attributes = True

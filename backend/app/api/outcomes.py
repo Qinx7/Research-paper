@@ -9,11 +9,14 @@ from sqlalchemy.orm import Session
 
 from ..core.database import get_db
 from ..models.outcome import Outcome
+from ..models.user import User
 from ..schemas.outcome import (
     OutcomeCreate, OutcomeUpdate, OutcomeOut, OutcomeSummary, ReadinessCheck,
     OUTCOME_TYPES, OutcomeTypeInfo,
 )
 from ..services.upload_service import save_upload, delete_upload, get_object_stream, validate_file_type
+from ..services.auth_dependency import get_current_user
+from ..services.ownership import get_owned_outcome, get_owned_project, query_owned_outcomes
 from ..agents.outcome_agent import outcome_agent
 
 logger = logging.getLogger(__name__)
@@ -37,6 +40,7 @@ def upload_outcome(
     outcome_type: str = Form(...),
     name: str = Form(...),
     description: str | None = Form(None),
+    current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     """上传项目成果文件"""
@@ -59,9 +63,10 @@ def upload_outcome(
         raise HTTPException(status_code=400, detail=f"无效的成果类型: {outcome_type}")
 
     try:
+        project = get_owned_project(project_id, current_user, db)
         relative_path = save_upload(file, "outcomes")
         outcome = Outcome(
-            project_id=UUID(project_id),
+            project_id=project.id,
             outcome_type=outcome_type,
             name=name,
             description=description,
@@ -85,12 +90,14 @@ def upload_outcome(
 def list_outcomes(
     project_id: str | None = None,
     outcome_type: str | None = None,
+    current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     """列出成果，可按项目和类型过滤"""
-    q = db.query(Outcome)
+    q = query_owned_outcomes(db, current_user)
     if project_id:
-        q = q.filter(Outcome.project_id == UUID(project_id))
+        project = get_owned_project(project_id, current_user, db)
+        q = q.filter(Outcome.project_id == project.id)
     if outcome_type:
         q = q.filter(Outcome.outcome_type == outcome_type)
     outcomes = q.order_by(Outcome.created_at.desc()).all()
@@ -103,22 +110,27 @@ def list_outcomes(
 
 
 @router.get("/{outcome_id}", response_model=OutcomeOut)
-def get_outcome(outcome_id: UUID, db: Session = Depends(get_db)):
+def get_outcome(
+    outcome_id: UUID,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
     """获取单个成果详情"""
-    outcome = db.query(Outcome).filter(Outcome.id == outcome_id).first()
-    if not outcome:
-        raise HTTPException(status_code=404, detail="成果不存在")
+    outcome = get_owned_outcome(outcome_id, current_user, db)
     result = OutcomeOut.model_validate(outcome)
     result.file_url = f"/api/outcomes/{outcome.id}/download" if outcome.file_path else None
     return result
 
 
 @router.patch("/{outcome_id}", response_model=OutcomeOut)
-def update_outcome(outcome_id: UUID, payload: OutcomeUpdate, db: Session = Depends(get_db)):
+def update_outcome(
+    outcome_id: UUID,
+    payload: OutcomeUpdate,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
     """更新成果元数据"""
-    outcome = db.query(Outcome).filter(Outcome.id == outcome_id).first()
-    if not outcome:
-        raise HTTPException(status_code=404, detail="成果不存在")
+    outcome = get_owned_outcome(outcome_id, current_user, db)
     try:
         for field, value in payload.model_dump(exclude_unset=True).items():
             setattr(outcome, field, value)
@@ -133,11 +145,13 @@ def update_outcome(outcome_id: UUID, payload: OutcomeUpdate, db: Session = Depen
 
 
 @router.delete("/{outcome_id}", status_code=204)
-def delete_outcome(outcome_id: UUID, db: Session = Depends(get_db)):
+def delete_outcome(
+    outcome_id: UUID,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
     """删除成果及其文件"""
-    outcome = db.query(Outcome).filter(Outcome.id == outcome_id).first()
-    if not outcome:
-        raise HTTPException(status_code=404, detail="成果不存在")
+    outcome = get_owned_outcome(outcome_id, current_user, db)
     try:
         if outcome.file_path:
             delete_upload(outcome.file_path)
@@ -149,11 +163,13 @@ def delete_outcome(outcome_id: UUID, db: Session = Depends(get_db)):
 
 
 @router.get("/{outcome_id}/download")
-def download_outcome(outcome_id: UUID, db: Session = Depends(get_db)):
+def download_outcome(
+    outcome_id: UUID,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
     """下载成果文件（MinIO 优先，本地 fallback）"""
-    outcome = db.query(Outcome).filter(Outcome.id == outcome_id).first()
-    if not outcome:
-        raise HTTPException(status_code=404, detail="成果不存在")
+    outcome = get_owned_outcome(outcome_id, current_user, db)
     if not outcome.file_path:
         raise HTTPException(status_code=404, detail="该成果没有文件")
 
@@ -175,9 +191,14 @@ def download_outcome(outcome_id: UUID, db: Session = Depends(get_db)):
 
 
 @router.post("/{project_id}/summarize", response_model=OutcomeSummary)
-def summarize_outcomes(project_id: UUID, db: Session = Depends(get_db)):
+def summarize_outcomes(
+    project_id: UUID,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
     """AI 汇总项目成果"""
-    outcomes = db.query(Outcome).filter(Outcome.project_id == project_id).all()
+    project = get_owned_project(project_id, current_user, db)
+    outcomes = db.query(Outcome).filter(Outcome.project_id == project.id).all()
     outcome_dicts = [
         {
             "outcome_type": o.outcome_type,
@@ -204,9 +225,14 @@ def summarize_outcomes(project_id: UUID, db: Session = Depends(get_db)):
 
 
 @router.post("/{project_id}/check-readiness", response_model=ReadinessCheck)
-def check_paper_readiness(project_id: UUID, db: Session = Depends(get_db)):
+def check_paper_readiness(
+    project_id: UUID,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
     """检查项目成果是否足够撰写论文"""
-    outcomes = db.query(Outcome).filter(Outcome.project_id == project_id).all()
+    project = get_owned_project(project_id, current_user, db)
+    outcomes = db.query(Outcome).filter(Outcome.project_id == project.id).all()
     outcome_dicts = [
         {
             "outcome_type": o.outcome_type,

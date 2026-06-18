@@ -11,6 +11,7 @@ from ..models.paper import Paper
 from ..agents.paper_writing_agent import paper_writing_agent
 from ..schemas.draft import PAPER_CHAPTER_KEYS, PAPER_CHAPTER_LABELS
 from ..services.compliance_checker import check_draft
+from ..services.evidence_retrieval_service import retrieve_project_evidence
 from ..services.grounding_guard import validate_generated_chapter_grounding
 from sqlalchemy.orm.attributes import flag_modified
 
@@ -43,6 +44,7 @@ def generate_chapter_task(
             q = q.filter(Outcome.id.in_([UUID(oid) for oid in outcome_ids]))
         outcomes = q.all()
         papers = db.query(Paper).filter(Paper.project_id == draft.project_id).all()
+        evidence_items = retrieve_project_evidence(db, draft.project_id, "", limit=12, min_confidence=70)
 
         # 调用 Agent 生成
         result = paper_writing_agent.generate_chapter(
@@ -57,6 +59,7 @@ def generate_chapter_task(
             result=result,
             outcomes=outcomes,
             papers=papers,
+            evidence_items=evidence_items,
         )
 
         # 保存到数据库

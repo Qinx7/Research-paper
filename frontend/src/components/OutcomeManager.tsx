@@ -100,6 +100,15 @@ export default function OutcomeManager({ projectId, onReadyChange }: Props) {
     }
   };
 
+  const handleDownload = async (outcome: Outcome) => {
+    if (!outcome.file_url) return;
+    try {
+      await api.downloadWithAuth(outcome.file_url, outcome.name);
+    } catch {
+      setError("下载失败");
+    }
+  };
+
   const handleSummarize = async () => {
     setError(null);
     try {
@@ -270,14 +279,12 @@ export default function OutcomeManager({ projectId, onReadyChange }: Props) {
                 </div>
                 <div className="flex gap-2 ml-3 shrink-0">
                   {o.file_url && (
-                    <a
-                      href={`http://127.0.0.1:8000${o.file_url}`}
+                    <button
+                      onClick={() => handleDownload(o)}
                       className="text-xs text-blue-600 hover:underline"
-                      target="_blank"
-                      rel="noreferrer"
                     >
                       下载
-                    </a>
+                    </button>
                   )}
                   <button
                     onClick={() => handleDelete(o.id)}
