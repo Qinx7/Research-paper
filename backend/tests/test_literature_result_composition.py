@@ -319,12 +319,50 @@ class LiteratureResultCompositionTests(unittest.TestCase):
         titles = [item["paper"].title for item in ranked]
         self.assertEqual(titles, ["IEEE conference paper"])
 
+    def test_unverified_authority_tags_do_not_match_quality_filter(self):
+        agent = LiteratureSearchAgent()
+        papers = [
+            PaperResult(
+                title="JCR and EI mentioned paper",
+                authors=["Author"],
+                year=2024,
+                venue="General Journal",
+                abstract="This abstract mentions JCR, EI indexing, and CAS partition.",
+                citation_count=10,
+                source="openalex",
+            ),
+        ]
+
+        ranked = agent._rank_results(
+            papers,
+            keywords_cn=[],
+            keywords_en=["paper"],
+            year_from=2020,
+            year_to=2026,
+            library_scope="all",
+            min_citation_count=0,
+            prefer_high_impact=False,
+            open_access_only=False,
+            quality_tags=["jcr"],
+        )
+
+        self.assertEqual(ranked, [])
+
     def test_resolve_sources_accepts_pubmed(self):
         agent = LiteratureSearchAgent()
 
         sources = agent._resolve_sources("all", ["pubmed", "openalex"])
 
         self.assertEqual(sources, ["pubmed", "openalex"])
+
+    def test_resolve_sources_accepts_pubscholar_and_includes_it_for_cn_scope(self):
+        agent = LiteratureSearchAgent()
+
+        explicit_sources = agent._resolve_sources("all", ["pubscholar"])
+        cn_sources = agent._resolve_sources("cn", None)
+
+        self.assertEqual(explicit_sources, ["pubscholar"])
+        self.assertIn("pubscholar", cn_sources)
 
 
 if __name__ == "__main__":

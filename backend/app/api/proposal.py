@@ -21,8 +21,8 @@ from ..schemas.proposal import (
     SECTION_LABELS,
 )
 from ..agents.proposal_agent import proposal_agent
+from ..agents.workflows import run_generate_proposal_workflow
 from ..tasks.proposal_task import generate_proposal_task
-from ..services.grounding_guard import collect_allowed_references_from_design
 from ..services.auth_dependency import get_current_user
 from ..services.generated_artifact_service import register_task_artifact
 from ..services.ownership import get_owned_design, get_owned_project, get_owned_proposal
@@ -229,6 +229,7 @@ def generate_proposal(
             project_design=design.content or {},
             research_direction=direction,
             literature_context=literature_context,
+            user_id=str(current_user.id),
         )
         register_task_artifact(db, current_user.id, task.id, "proposal")
         return {"task_id": task.id, "status": "pending"}
@@ -262,24 +263,22 @@ def generate_proposal(
             parts.append("国际现状：" + str(lit_review.get("international", "")))
             literature_context = "\n".join(parts)
 
-    # 调用 Agent 生成
-    result = proposal_agent.generate(
-        project_design=design.content or {},
-        research_direction=direction,
-        literature_context=literature_context,
-        allowed_references=collect_allowed_references_from_design(design.content or {}),
-    )
+    try:
+        workflow_result = run_generate_proposal_workflow(
+            db=db,
+            project_id=str(design.project_id) if design.project_id else "",
+            design_id=str(design.id),
+            project_design=design.content or {},
+            research_direction=direction,
+            literature_context=literature_context,
+            user_id=str(current_user.id),
+            proposal_agent=proposal_agent,
+            record_db=db,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=500, detail=f"开题报告生成失败: {e}")
 
-    # 保存到数据库
-    proposal = Proposal(
-        project_id=design.project_id,
-        design_id=design.id,
-        title=result.get("title", f"{design.topic} —— 开题报告"),
-        content=result.get("sections", {}),
-    )
-    db.add(proposal)
-    db.commit()
-    db.refresh(proposal)
+    proposal = workflow_result["proposal"]
 
     # 生成 docx 并保存（MinIO + 本地双写）
     _ensure_storage_dir()
@@ -316,6 +315,25 @@ def get_proposal(
 ):
     """获取开题报告详情"""
     proposal = get_owned_proposal(proposal_id, current_user, db)
+    return _proposal_to_out(proposal)
+
+
+@router.get("/project/{project_id}/latest", response_model=ProposalOut | None)
+def get_latest_project_proposal(
+    project_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """获取项目下最新一份开题报告。"""
+    project = get_owned_project(project_id, current_user, db)
+    proposal = (
+        db.query(Proposal)
+        .filter(Proposal.project_id == project.id)
+        .order_by(Proposal.created_at.desc())
+        .first()
+    )
+    if not proposal:
+        return None
     return _proposal_to_out(proposal)
 
 

@@ -7,6 +7,7 @@ class FakeDb:
         self.added = []
         self.committed = False
         self.closed = False
+        self.executed = []
 
     def add(self, item):
         self.added.append(item)
@@ -19,6 +20,10 @@ class FakeDb:
         self.committed = True
 
     def rollback(self):
+        return None
+
+    def execute(self, statement):
+        self.executed.append(str(statement))
         return None
 
     def close(self):
@@ -64,6 +69,43 @@ class ResearchDirectionSaveTests(unittest.TestCase):
         self.assertEqual(saved.feasibility_score, 8.0)
         self.assertEqual(saved.recommendation_score, 9.0)
         self.assertEqual(saved.content["scores"], score["scores"])
+
+    def test_save_single_direction_falls_back_when_content_column_is_missing(self):
+        import app.api.research as research_api
+
+        fake_db = FakeDb()
+        original_session_local = research_api.SessionLocal
+        original_has_column = research_api._table_has_column
+        research_api.SessionLocal = lambda: fake_db
+        research_api._table_has_column = lambda *_args, **_kwargs: False
+        project_id = uuid.uuid4()
+        direction = {
+            "title": "具身智能系统研究",
+            "background": "测试兼容旧表结构。",
+            "research_questions": ["如何保证保存成功？"],
+            "methods": ["系统设计法"],
+            "expected_outputs": ["原型"],
+            "innovation": ["兼容旧库"],
+        }
+        score = {
+            "title": direction["title"],
+            "scores": {
+                "feasibility": 7,
+                "overall": 7,
+            },
+        }
+
+        try:
+            saved_id = research_api._save_single_direction_to_db(direction, score, project_id)
+        finally:
+            research_api.SessionLocal = original_session_local
+            research_api._table_has_column = original_has_column
+
+        self.assertIsNotNone(saved_id)
+        self.assertTrue(fake_db.committed)
+        self.assertTrue(fake_db.closed)
+        saved = fake_db.added[0]
+        self.assertFalse(hasattr(saved, "content") and saved.content is None is False)
 
 
 if __name__ == "__main__":

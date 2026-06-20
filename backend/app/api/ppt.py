@@ -46,7 +46,7 @@ def list_ppts(current_user: User = Depends(get_current_user)):
 
 
 @router.get("/styles", response_model=list[PPTStyleOut])
-def list_ppt_styles():
+def list_ppt_styles(current_user: User = Depends(get_current_user)):
     """列出可选的 PPT 风格列表"""
     return ppt_agent.list_styles()
 

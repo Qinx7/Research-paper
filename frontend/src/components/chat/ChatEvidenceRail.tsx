@@ -167,7 +167,7 @@ function ProjectPanel({ items }: { items: ProjectContextItem[] }) {
           {items.slice(0, 5).map((item, index) => (
             <article key={`${item.title}-${index}`} className="border border-emerald-200 bg-emerald-50/60 p-3">
               <p className="text-xs font-semibold leading-5 text-slate-900">
-                [P{index + 1}] {item.kind === "paper_note" ? "内部证据卡片" : item.kind === "project_paper" ? "项目文献" : item.kind} · {item.title}
+                [P{index + 1}] {projectItemLabel(item.kind)} · {item.title}
               </p>
               {item.kind === "paper_note" && (
                 <div className="mt-2 flex flex-wrap gap-1.5">
@@ -185,6 +185,14 @@ function ProjectPanel({ items }: { items: ProjectContextItem[] }) {
                   {item.year && <EvidenceChip>{String(item.year)}</EvidenceChip>}
                   {item.source && <EvidenceChip>{sourceLabels[item.source] || item.source}</EvidenceChip>}
                   {typeof item.citation_count === "number" && <EvidenceChip>引用 {item.citation_count}</EvidenceChip>}
+                  {(item.score_reasons || []).slice(0, 3).map((reason) => (
+                    <EvidenceChip key={reason}>{reason}</EvidenceChip>
+                  ))}
+                </div>
+              )}
+              {item.kind === "project_document_chunk" && (
+                <div className="mt-2 flex flex-wrap gap-1.5">
+                  {item.source_title && <EvidenceChip>{item.source_title}</EvidenceChip>}
                   {(item.score_reasons || []).slice(0, 3).map((reason) => (
                     <EvidenceChip key={reason}>{reason}</EvidenceChip>
                   ))}
@@ -229,6 +237,13 @@ function noteTypeLabel(type: string) {
     idea: "想法",
   };
   return labels[type] || type;
+}
+
+function projectItemLabel(kind: string) {
+  if (kind === "paper_note") return "内部证据卡片";
+  if (kind === "project_paper") return "项目文献";
+  if (kind === "project_document_chunk") return "内部资料";
+  return kind;
 }
 
 function SectionTitle({ title, count }: { title: string; count?: number }) {

@@ -28,10 +28,10 @@ from ..schemas.draft import (
 from ..schemas.defense_ppt import DefensePPTOutline, DefenseSlideInfo
 from ..schemas.compliance import ComplianceResult, ComplianceConfirmRequest
 from ..agents.paper_writing_agent import paper_writing_agent
+from ..agents.workflows import run_generate_chapter_workflow
 from ..tasks.paper_task import generate_chapter_task
 from ..services.compliance_checker import check_draft
 from ..services.evidence_retrieval_service import build_evidence_context, retrieve_project_evidence
-from ..services.grounding_guard import validate_generated_chapter_grounding
 from ..services.auth_dependency import get_current_user
 from ..services.ownership import get_owned_draft, get_owned_project, query_owned_drafts
 from ..core.config import settings
@@ -344,47 +344,21 @@ def generate_chapter(
         )
         return {"task_id": task.id, "status": "pending", "chapter_key": chapter_key}
 
-    # 同步模式
-    outcomes_summary = _build_outcomes_summary(db, draft.project_id)
-    evidence_items = retrieve_project_evidence(db, draft.project_id, "", limit=12, min_confidence=70)
-    literature_context = _build_literature_context(db, draft.project_id, evidence_items)
-    outcomes = db.query(Outcome).filter(Outcome.project_id == draft.project_id).all()
-    papers = db.query(Paper).filter(Paper.project_id == draft.project_id).all()
-
-    result = paper_writing_agent.generate_chapter(
-        chapter_key=chapter_key,
-        outline=draft.outline or {},
-        outcomes_summary=outcomes_summary,
-        literature_context=literature_context,
-        existing_chapters=draft.content or {},
-    )
     try:
-        result = validate_generated_chapter_grounding(
+        result = run_generate_chapter_workflow(
+            db=db,
+            draft=draft,
             chapter_key=chapter_key,
-            result=result,
-            outcomes=outcomes,
-            papers=papers,
-            evidence_items=evidence_items,
+            user_id=str(current_user.id),
+            writing_agent=paper_writing_agent,
+            record_db=db,
         )
     except ValueError as e:
         raise HTTPException(status_code=422, detail=f"章节生成结果缺少可验证依据: {e}")
 
-    # 保存到 DB
-    content = draft.content or {}
-    chapter_title = PAPER_CHAPTER_LABELS.get(chapter_key, chapter_key)
-    content[chapter_key] = {
-        "title": result.get("title", chapter_title),
-        "content": result.get("content", ""),
-        "status": "generated",
-        "data_based": result.get("data_based", False),
-    }
-    draft.content = content
-    draft.version = (draft.version or 1) + 1
-    db.commit()
-
     return ChapterResult(
         chapter_key=chapter_key,
-        title=result.get("title", chapter_title),
+        title=result.get("title", PAPER_CHAPTER_LABELS.get(chapter_key, chapter_key)),
         content=result.get("content", ""),
         status="generated",
         citations=result.get("citations", []),

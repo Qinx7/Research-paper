@@ -2,13 +2,12 @@
 import io
 import logging
 import os
-from datetime import datetime
 
 from ..core.celery_app import celery_app
 from ..core.database import SessionLocal
 from ..models.proposal import Proposal
 from ..agents.proposal_agent import proposal_agent
-from ..services.grounding_guard import collect_allowed_references_from_design
+from ..agents.workflows import run_generate_proposal_workflow
 
 logger = logging.getLogger(__name__)
 
@@ -23,32 +22,27 @@ def generate_proposal_task(
     project_design: dict,
     research_direction: dict | None = None,
     literature_context: str = "",
+    user_id: str | None = None,
 ) -> dict:
     """异步生成开题报告，存入 DB 并生成 docx。
 
     返回可直接用于 ProposalOut 的序列化数据。
     """
     try:
-        # 调用 Agent 生成内容
-        result = proposal_agent.generate(
-            project_design=project_design,
-            research_direction=research_direction,
-            literature_context=literature_context,
-            allowed_references=collect_allowed_references_from_design(project_design or {}),
-        )
-
-        # 保存到数据库
         db = SessionLocal()
         try:
-            proposal = Proposal(
+            workflow_result = run_generate_proposal_workflow(
+                db=db,
                 project_id=project_id,
                 design_id=design_id,
-                title=result.get("title", "开题报告"),
-                content=result.get("sections", {}),
+                project_design=project_design,
+                research_direction=research_direction,
+                literature_context=literature_context,
+                user_id=user_id,
+                proposal_agent=proposal_agent,
+                record_db=db,
             )
-            db.add(proposal)
-            db.commit()
-            db.refresh(proposal)
+            proposal = workflow_result["proposal"]
 
             proposal_id = str(proposal.id)
 
@@ -72,8 +66,9 @@ def generate_proposal_task(
             return {
                 "id": proposal_id,
                 "title": proposal.title,
-                "sections_count": len(result.get("sections", {})),
+                "sections_count": workflow_result.get("sections_count", 0),
                 "download_url": f"/api/proposal/{proposal_id}/download",
+                "workflow_run_id": workflow_result.get("workflow_run_id"),
             }
         finally:
             db.close()

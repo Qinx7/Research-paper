@@ -13,6 +13,7 @@ import type {
   Paper,
   RequirementAnalysis,
   ResearchDirection,
+  SearchSummary,
   SourceStatusInfo,
 } from "@/lib/types";
 
@@ -23,6 +24,7 @@ type Props = {
   searchError: string | null;
   sourceSummary: string;
   sourceStatuses: Record<string, SourceStatusInfo>;
+  searchSummary: SearchSummary | null;
   referencesOpen: boolean;
   savingDirectionTitle: string | null;
   savedDirectionTitles: string[];
@@ -53,6 +55,7 @@ export default function TopicResearchPanel({
   searchError,
   sourceSummary,
   sourceStatuses,
+  searchSummary,
   referencesOpen,
   savingDirectionTitle,
   savedDirectionTitles,
@@ -70,6 +73,7 @@ export default function TopicResearchPanel({
   const [requirementError, setRequirementError] = useState<string | null>(null);
   const [literatureAnalysisError, setLiteratureAnalysisError] = useState<string | null>(null);
   const [directionsError, setDirectionsError] = useState<string | null>(null);
+  const STORAGE_KEY = useMemo(() => `topic_research_snapshot::${query.trim()}`, [query]);
   const requirementRunKeyRef = useRef("");
   const literatureRunKeyRef = useRef("");
   const directionsRunKeyRef = useRef("");
@@ -131,16 +135,40 @@ export default function TopicResearchPanel({
   }, [literatureResult, query]);
 
   useEffect(() => {
-    setRequirementResult(null);
-    setLiteratureResult(null);
-    setDirectionsResult(null);
     setRequirementError(null);
     setLiteratureAnalysisError(null);
     setDirectionsError(null);
     requirementRunKeyRef.current = "";
     literatureRunKeyRef.current = "";
     directionsRunKeyRef.current = "";
-  }, [query]);
+
+    try {
+      const raw = window.localStorage.getItem(STORAGE_KEY);
+      if (!raw) {
+        setRequirementResult(null);
+        setLiteratureResult(null);
+        setDirectionsResult(null);
+        return;
+      }
+      const snapshot = JSON.parse(raw) as {
+        requirementResult: AnalyzeRequirementResponse | null;
+        literatureResult: AnalyzeLiteratureResponse | null;
+        directionsResult: GenerateDirectionsResponse | null;
+      };
+      setRequirementResult(snapshot.requirementResult);
+      setLiteratureResult(snapshot.literatureResult);
+      setDirectionsResult(snapshot.directionsResult);
+      requirementRunKeyRef.current = snapshot.requirementResult ? query.trim() : "";
+      literatureRunKeyRef.current = snapshot.literatureResult ? `${query}::${paperSignature}` : "";
+      directionsRunKeyRef.current = snapshot.directionsResult && snapshot.literatureResult
+        ? `${query}::${snapshot.literatureResult.analyzed_papers}::${snapshot.literatureResult.research_gaps.join("|")}`
+        : "";
+    } catch {
+      setRequirementResult(null);
+      setLiteratureResult(null);
+      setDirectionsResult(null);
+    }
+  }, [STORAGE_KEY, paperSignature, query]);
 
   useEffect(() => {
     runRequirementAnalysis();
@@ -153,6 +181,18 @@ export default function TopicResearchPanel({
   useEffect(() => {
     runDirections();
   }, [runDirections]);
+
+  useEffect(() => {
+    if (!requirementResult && !literatureResult && !directionsResult) return;
+    window.localStorage.setItem(
+      STORAGE_KEY,
+      JSON.stringify({
+        requirementResult,
+        literatureResult,
+        directionsResult,
+      }),
+    );
+  }, [STORAGE_KEY, directionsResult, literatureResult, requirementResult]);
 
   return (
     <div className="mx-auto max-w-5xl space-y-7">
@@ -192,6 +232,7 @@ export default function TopicResearchPanel({
         actionLabel="重新分析"
         onAction={() => runLiteratureAnalysis(true)}
       >
+        {searchSummary ? <SearchSummaryBlock summary={searchSummary} /> : null}
         {papers.length === 0 && !searchLoading ? (
           <EmptyHint text="暂无足够文献依据，暂不生成文献分析。" />
         ) : literatureResult ? (
@@ -228,6 +269,70 @@ export default function TopicResearchPanel({
           <EmptyHint text="文献分析完成后会自动生成候选方向。" />
         )}
       </StepCard>
+    </div>
+  );
+}
+
+function SearchSummaryBlock({ summary }: { summary: SearchSummary }) {
+  const insufficient = summary.status === "insufficient";
+
+  return (
+    <div className={`mb-5 rounded-3xl border p-5 ${
+      insufficient ? "border-[#f1d49b] bg-[#fff8ea]" : "border-[#cfe3f4] bg-[#edf7ff]"
+    }`}>
+      <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+        <div>
+          <p className="text-xs font-black uppercase tracking-[0.2em] text-[#126fb0]">Search Synthesis</p>
+          <h3 className="mt-2 text-xl font-black tracking-[-0.03em] text-[#101318]">本次检索总结</h3>
+        </div>
+        <span className={`rounded-full px-3 py-1.5 text-xs font-black ${
+          insufficient ? "bg-white text-[#8a5a00]" : "bg-white text-[#126fb0]"
+        }`}>
+          {insufficient ? "依据不足" : "仅基于本次检索"}
+        </span>
+      </div>
+      <p className="mt-4 text-sm leading-7 text-[#33404b]">{summary.overview}</p>
+
+      {summary.representative_papers.length ? (
+        <div className="mt-5">
+          <p className="mb-3 text-xs font-black uppercase tracking-[0.18em] text-[#7a8591]">代表性文献</p>
+          <div className="grid gap-3">
+            {summary.representative_papers.slice(0, 3).map((paper, index) => (
+              <div key={`${paper.title}-${index}`} className="rounded-2xl bg-white/80 px-4 py-3">
+                <p className="line-clamp-2 text-sm font-black leading-6 text-[#202a34]">{paper.title}</p>
+                <p className="mt-1 text-xs leading-5 text-[#66717d]">
+                  {paper.year || "未知年份"} · {paper.source || "未知来源"} · {paper.reason || "本次检索排序靠前"}
+                </p>
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : null}
+
+      <div className="mt-5 grid gap-3 md:grid-cols-3">
+        <SummaryMiniList title="主要方法" items={summary.main_methods} />
+        <SummaryMiniList title="近期趋势" items={summary.research_trends} />
+        <SummaryMiniList title="潜在空白" items={summary.research_gaps} />
+      </div>
+
+      {summary.warnings.length ? (
+        <div className="mt-4 rounded-2xl border border-[#f1d49b] bg-white/75 px-4 py-3 text-sm leading-6 text-[#775000]">
+          {summary.warnings.join("；")}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function SummaryMiniList({ title, items }: { title: string; items: string[] }) {
+  return (
+    <div className="rounded-2xl bg-white/70 px-4 py-3">
+      <p className="text-xs font-black uppercase tracking-[0.16em] text-[#7a8591]">{title}</p>
+      <ul className="mt-2 space-y-1.5 text-sm leading-6 text-[#3f4a55]">
+        {(items.length ? items : ["暂无足够依据"]).slice(0, 3).map((item) => (
+          <li key={item}>· {item}</li>
+        ))}
+      </ul>
     </div>
   );
 }

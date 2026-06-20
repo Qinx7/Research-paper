@@ -80,6 +80,13 @@ class ScraplingCNKIFallback:
             self.last_detail = f"count={len(results)} query={query}"
             return results
         except Exception as exc:
+            # 捕获 Playwright asyncio 冲突错误
+            exc_str = str(exc).lower()
+            if "asyncio" in exc_str or "async api" in exc_str or "sync api" in exc_str:
+                self.last_status = "unavailable"
+                self.last_detail = "asyncio_conflict"
+                logger.info("Scrapling CNKI fallback unavailable in asyncio context")
+                return []
             self.last_status = "error"
             self.last_detail = str(exc)
             logger.warning("Scrapling CNKI fallback failed: query=%s error=%s", query, exc)

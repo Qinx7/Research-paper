@@ -6,8 +6,8 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from ..agents.requirement_agent import requirement_agent
-from ..agents.literature_search_agent import literature_search_agent
 from ..agents.literature_review_agent import literature_review_agent
+from ..agents.workflows import run_literature_search_workflow
 from ..core.config import settings
 from ..core.database import get_db, SessionLocal
 from ..models.paper import Paper
@@ -39,7 +39,10 @@ router = APIRouter(prefix="/literature", tags=["literature"])
 
 
 @router.post("/keywords")
-def generate_keywords(payload: KeywordsRequest):
+def generate_keywords(
+    payload: KeywordsRequest,
+    current_user: User = Depends(get_current_user),
+):
     """
     根据用户需求生成检索关键词（调用需求理解 Agent）。
 
@@ -78,7 +81,7 @@ def search_literature(
         mark_literature_search_task_running(task.id)
 
     try:
-        result = literature_search_agent.search_by_requirement(
+        result = run_literature_search_workflow(
             keywords_cn=payload.keywords_cn,
             keywords_en=payload.keywords_en,
             year_from=payload.year_from or 2020,
@@ -91,6 +94,10 @@ def search_literature(
             prefer_high_impact=payload.prefer_high_impact,
             open_access_only=payload.open_access_only,
             quality_tags=payload.quality_tags,
+            search_task_id=str(task.id) if task else None,
+            user_id=str(current_user.id) if getattr(current_user, "id", None) else None,
+            project_id=str(payload.project_id) if payload.project_id else None,
+            record_db=db,
         )
 
         # 尝试保存到数据库（数据库不可用时静默跳过）
@@ -398,7 +405,10 @@ def _get_owned_project(project_id: str, current_user: User, db: Session) -> Proj
 
 
 @router.post("/analyze")
-def analyze_literature(payload: LiteratureAnalyzeRequest):
+def analyze_literature(
+    payload: LiteratureAnalyzeRequest,
+    current_user: User = Depends(get_current_user),
+):
     """
     对文献列表进行结构化分析（调用文献综述 Agent）。
 

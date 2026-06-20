@@ -13,6 +13,121 @@ export interface Project {
   updated_at: string;
 }
 
+export interface ProjectWorkspaceLinkedOutcome {
+  id: string;
+  name: string;
+  outcome_type: string | null;
+  download_url: string | null;
+  action_url: string;
+  action_label: string;
+}
+
+export interface ProjectWorkspaceLinkedPaper {
+  id: string;
+  title: string;
+  venue: string | null;
+  year: number | null;
+  citation_count: number;
+  action_url: string;
+  action_label: string;
+}
+
+export interface ProjectWorkspaceLinkedNote {
+  id: string;
+  title: string;
+  note_type: string | null;
+  confidence: number | null;
+  evidence_text: string | null;
+  action_url: string;
+  action_label: string;
+}
+
+export interface ProjectWorkspaceLinkedChunk {
+  id: string;
+  title: string;
+  source_filename: string | null;
+  source_type: string | null;
+  download_url: string;
+  action_url: string;
+  action_label: string;
+}
+
+export interface ProjectWorkspaceOutcome {
+  id: string;
+  name: string;
+  outcome_type: string | null;
+  description: string | null;
+  knowledge_status: string;
+  chunk_count: number;
+  download_url: string | null;
+  cited_by_chapters: string[];
+}
+
+export interface ProjectWorkspaceChapter {
+  draft_id: string;
+  chapter_key: string;
+  title: string;
+  status: string;
+  word_count: number;
+  citations_count: number;
+  evidence_count: number;
+  data_based: boolean;
+  linked_outcomes: ProjectWorkspaceLinkedOutcome[];
+  linked_papers: ProjectWorkspaceLinkedPaper[];
+  linked_notes: ProjectWorkspaceLinkedNote[];
+  linked_chunks: ProjectWorkspaceLinkedChunk[];
+  action_url: string;
+  action_label: string;
+}
+
+export interface ProjectWorkspaceDeliveryDraft {
+  id: string;
+  title: string;
+  version: number;
+  completed_chapters: number;
+  total_chapters: number;
+  completion_rate: number;
+  download_docx_url: string;
+  download_pdf_url: string;
+  action_url: string;
+  action_label: string;
+}
+
+export interface ProjectWorkspaceDeliveryProposal {
+  id: string;
+  title: string;
+  download_docx_url: string;
+  download_pdf_url: string;
+  action_url: string;
+  action_label: string;
+}
+
+export interface ProjectWorkspaceDeliveryDefense {
+  ready: boolean;
+  has_real_data: boolean;
+  draft_id: string | null;
+  action_url: string;
+  action_label: string;
+}
+
+export interface ProjectWorkspaceSnapshot {
+  stats: {
+    outcomes_total: number;
+    indexed_outcomes: number;
+    drafts_total: number;
+    evidence_cards_total: number;
+    project_papers_total: number;
+    project_chunks_total: number;
+  };
+  outcomes: ProjectWorkspaceOutcome[];
+  chapters: ProjectWorkspaceChapter[];
+  delivery: {
+    latest_draft: ProjectWorkspaceDeliveryDraft | null;
+    latest_proposal: ProjectWorkspaceDeliveryProposal | null;
+    defense: ProjectWorkspaceDeliveryDefense;
+  };
+}
+
 // ========== 需求分析 ==========
 
 export interface RequirementAnalysis {
@@ -43,7 +158,7 @@ export interface Paper {
   abstract: string | null;
   url: string | null;
   citation_count: number;
-  source: "openalex" | "semantic_scholar" | "cnki" | "cqvip" | "crossref" | "arxiv";
+  source: "openalex" | "semantic_scholar" | "cnki" | "cqvip" | "crossref" | "arxiv" | "pubmed" | "pubscholar";
   language?: "cn" | "en";
   relevance_score?: number;
   freshness_score?: number;
@@ -53,6 +168,11 @@ export interface Paper {
   is_open_access?: boolean | null;
   quality_flags?: string[];
   quality_inference?: string[];
+  authority_tags?: string[];
+  pending_authority_tags?: string[];
+  authority_reasons?: string[];
+  authority_level?: string;
+  verified_level?: "verified" | "unverified" | string;
   why_selected?: string;
 }
 
@@ -139,13 +259,48 @@ export interface SearchLiteratureResponse {
     pubmed?: number;
     openalex: number;
     semantic_scholar: number;
+    pubscholar?: number;
     cnki?: number;
     cqvip?: number;
     crossref?: number;
     arxiv?: number;
   };
   source_statuses?: Record<string, SourceStatusInfo>;
+  search_summary?: SearchSummary;
+  search_diagnostics?: SearchDiagnostics;
+  workflow_status?: string;
+  workflow_run_id?: string;
   papers: Paper[];
+}
+
+export interface SearchSummary {
+  status: "ready" | "insufficient" | string;
+  overview: string;
+  authority_summary: {
+    verified_counts: Record<string, number>;
+    pending_counts: Record<string, number>;
+    overview: string;
+    has_verified: boolean;
+    has_pending: boolean;
+  };
+  representative_papers: {
+    title: string;
+    year?: number | null;
+    source?: string | null;
+    reason?: string | null;
+  }[];
+  main_methods: string[];
+  research_trends: string[];
+  research_gaps: string[];
+  suggested_queries: string[];
+  warnings: string[];
+}
+
+export interface SearchDiagnostics {
+  source_notes: Record<string, string>;
+  failed_sources: string[];
+  has_failures: boolean;
+  overview?: string;
 }
 
 // ========== 文献分析 ==========
@@ -213,6 +368,12 @@ export interface GenerateDirectionsResponse {
   directions: ResearchDirection[];
   scores: DirectionScore[];
   saved_ids: string[];
+}
+
+export interface TopicResearchSnapshot {
+  requirementResult: AnalyzeRequirementResponse | null;
+  literatureResult: AnalyzeLiteratureResponse | null;
+  directionsResult: GenerateDirectionsResponse | null;
 }
 
 export interface SaveDirectionResponse {
@@ -356,6 +517,11 @@ export interface SearchResultItem {
   source: string;
   is_open_access?: boolean | null;
   quality_flags?: string[];
+  authority_tags?: string[];
+  pending_authority_tags?: string[];
+  authority_reasons?: string[];
+  authority_level?: string;
+  verified_level?: "verified" | "unverified" | string;
 }
 
 export interface ProjectContextItem {
@@ -377,6 +543,22 @@ export interface ProjectContextItem {
   tags?: string[];
   action_url?: string | null;
   action_label?: string | null;
+}
+
+export interface OutcomeKnowledgeExtra {
+  knowledge_status?: "pending" | "parsing" | "indexed" | "failed" | string;
+  knowledge_chunk_count?: number;
+  knowledge_error?: string | null;
+  knowledge_indexed_at?: string | null;
+}
+
+export interface OutcomeKnowledgeStatus {
+  outcome_id: string;
+  status: string;
+  chunk_count: number;
+  message: string;
+  error?: string | null;
+  indexed_at?: string | null;
 }
 
 export interface SourceStatusInfo {
@@ -440,7 +622,7 @@ export interface Outcome {
   name: string;
   description: string | null;
   file_path: string | null;
-  extra_data: Record<string, unknown> | null;
+  extra_data: (Record<string, unknown> & OutcomeKnowledgeExtra) | null;
   file_url: string | null;
   created_at: string;
   updated_at: string;
@@ -487,7 +669,7 @@ export interface Draft {
   id: string;
   project_id: string;
   title: string;
-  content: Record<string, { title: string; content: string; status: string; data_based?: boolean }> | null;
+  content: Record<string, { title: string; content: string; status: string; data_based?: boolean; citations?: string[] }> | null;
   references: Record<string, unknown>[] | null;
   outline: DraftOutline | null;
   version: number;
@@ -675,6 +857,43 @@ export interface TokenResponse {
   user_id: string;
   username: string;
   email: string;
+}
+
+// ========== Agent Workflow 执行记录 ==========
+
+export interface AgentWorkflowStep {
+  id: string;
+  run_id: string;
+  node_name: string;
+  status: string;
+  input_summary: Record<string, unknown> | null;
+  output_summary: Record<string, unknown> | null;
+  error_message: string | null;
+  duration_ms: number;
+  started_at: string | null;
+  finished_at: string | null;
+  created_at: string | null;
+  updated_at: string | null;
+}
+
+export interface AgentWorkflowRun {
+  id: string;
+  workflow_name: string;
+  status: string;
+  user_id: string | null;
+  project_id: string | null;
+  search_task_id: string | null;
+  input_snapshot: Record<string, unknown> | null;
+  output_snapshot: Record<string, unknown> | null;
+  error_message: string | null;
+  started_at: string | null;
+  finished_at: string | null;
+  created_at: string | null;
+  updated_at: string | null;
+}
+
+export interface AgentWorkflowRunDetail extends AgentWorkflowRun {
+  steps: AgentWorkflowStep[];
 }
 
 export type SSEEvent =

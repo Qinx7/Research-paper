@@ -73,3 +73,17 @@ def can_access_object_key(db: Session, user_id: UUID, object_key: str) -> bool:
         .first()
     )
     return bool(record and record.user_id == user_id)
+
+
+def list_generated_files_by_type(db: Session, user_id: UUID, artifact_type: str) -> list[GeneratedArtifact]:
+    """列出当前用户某种类型的生成文件。"""
+    return (
+        db.query(GeneratedArtifact)
+        .filter(
+            GeneratedArtifact.user_id == user_id,
+            GeneratedArtifact.artifact_type == artifact_type,
+            GeneratedArtifact.object_key.isnot(None),
+        )
+        .order_by(GeneratedArtifact.created_at.desc())
+        .all()
+    )

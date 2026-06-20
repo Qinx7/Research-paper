@@ -91,7 +91,13 @@ class CNKIClient:
         year_to: int = 2026,
         limit: int = 20,
     ) -> list[PaperResult]:
-        """搜索 CNKI 中文文献。"""
+        """搜索 CNKI 中文文献。
+
+        搜索字段策略：
+        - field=101: 主题（默认，覆盖标题+关键词+摘要）
+        - field=1: 标题（更精准）
+        - field=0: 全文（范围最大但易超时）
+        """
         cooldown_key = self._cooldown_key(query, year_from, year_to, limit)
         cooldown = self._get_failure_cooldown(cooldown_key)
         if cooldown:
@@ -265,6 +271,13 @@ class CNKIClient:
             )
             if not results:
                 logger.warning("CNKI 未命中文献: query=%s", query)
+                logger.info(
+                    "CNKI 诊断信息: initial_results=%s, gate_error=%s, scrapling_status=%s, scrapling_detail=%s",
+                    len(initial_results),
+                    gate_error_status or "none",
+                    self.scrapling_fallback.last_status,
+                    self.scrapling_fallback.last_detail,
+                )
                 if gate_error_status == "retryable_error":
                     self.last_status = "gateway_timeout"
                     self.last_detail = self.last_detail or f"query={query}"

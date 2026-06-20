@@ -24,24 +24,62 @@ from .api.zotero import router as zotero_router
 from .api.auth import router as auth_router
 from .api.paper_notes import router as paper_notes_router
 from .api.literature_search_tasks import router as literature_search_tasks_router
+from .api.agent_workflows import router as agent_workflows_router
 from .core.database import engine, Base, SessionLocal
+from .core.config import settings
+from . import models  # noqa: F401  # 导入模型，确保 create_all 能发现所有表
+
+# 启动前安全检查
+import logging
+
+logger = logging.getLogger(__name__)
+
+if not settings.JWT_SECRET_KEY:
+    logger.error("JWT_SECRET_KEY 未设置！生产环境必须通过环境变量配置强随机密钥")
+    sys.exit(1)
+
+if settings.JWT_SECRET_KEY == "your_jwt_secret":
+    logger.error("JWT_SECRET_KEY 仍为默认值！生产环境必须修改")
+    sys.exit(1)
+
+if settings.APP_ENV == "production":
+    if not settings.MINIO_ACCESS_KEY or settings.MINIO_ACCESS_KEY == "minioadmin":
+        logger.error("生产环境必须设置安全的 MINIO_ACCESS_KEY")
+        sys.exit(1)
+    if not settings.MINIO_SECRET_KEY or settings.MINIO_SECRET_KEY == "minioadmin":
+        logger.error("生产环境必须设置安全的 MINIO_SECRET_KEY")
+        sys.exit(1)
 
 # 启动时自动建表（数据库不可用时不阻塞启动）
 try:
     Base.metadata.create_all(bind=engine)
-except Exception:
-    pass
+except Exception as exc:
+    import logging
+
+    logging.getLogger(__name__).warning("初始化数据库表失败: %s", exc)
 
 # 启用 pgvector 扩展并创建向量存储表（数据库不可用时不阻塞启动）
+db = None
 try:
     db = SessionLocal()
     from .services.embedding_service import ensure_document_vectors_table
-    from .services.schema_compat import ensure_conversation_user_column
+    from .services.schema_compat import (
+        ensure_conversation_user_column,
+        ensure_project_design_content_column,
+        ensure_research_direction_content_column,
+    )
+
     ensure_conversation_user_column(db)
+    ensure_research_direction_content_column(db)
+    ensure_project_design_content_column(db)
     ensure_document_vectors_table(db)
-    db.close()
-except Exception:
-    pass
+except Exception as exc:
+    import logging
+
+    logging.getLogger(__name__).warning("初始化向量存储失败: %s", exc)
+finally:
+    if db is not None:
+        db.close()
 
 app = FastAPI(
     title="Literature-driven Graduate Research Agent",
@@ -72,6 +110,7 @@ app.include_router(zotero_router, prefix="/api")
 app.include_router(auth_router, prefix="/api")
 app.include_router(paper_notes_router, prefix="/api")
 app.include_router(literature_search_tasks_router, prefix="/api")
+app.include_router(agent_workflows_router, prefix="/api")
 
 
 @app.get("/health")

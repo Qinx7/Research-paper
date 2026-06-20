@@ -23,6 +23,7 @@ from ..agents.chat_agent import chat_stream, extract_keywords, build_search_plan
 from ..agents.literature_search_agent import literature_search_agent
 from ..services.embedding_service import search_similar_papers, batch_store_papers
 from ..services.evidence_retrieval_service import (
+    retrieve_project_document_chunks,
     retrieve_project_evidence,
     retrieve_project_paper_evidence,
     tokenize_evidence_query,
@@ -164,9 +165,10 @@ def _build_project_private_context(db: Session, project_id: str, query: str) -> 
             action_label="打开成果" if outcome.file_path else "打开项目",
         )
 
+    document_items = retrieve_project_document_chunks(db, project.id, query, limit=6)
     note_items = retrieve_project_evidence(db, project.id, query, limit=6, min_confidence=0)
     paper_items = retrieve_project_paper_evidence(db, project.id, query, limit=6)
-    if len(note_items) + len(paper_items) < 3:
+    if len(document_items) + len(note_items) + len(paper_items) < 3:
         fallback_papers = retrieve_project_paper_evidence(db, project.id, "", limit=3)
         existing_titles = {item["title"] for item in paper_items}
         for paper_item in fallback_papers:
@@ -177,9 +179,9 @@ def _build_project_private_context(db: Session, project_id: str, query: str) -> 
     supporting_candidates.sort(key=lambda item: item["score"], reverse=True)
 
     evidence_candidates = sorted(
-        note_items + paper_items,
+        document_items + note_items + paper_items,
         key=lambda item: (
-            1 if item["kind"] == "paper_note" else 0,
+            2 if item["kind"] == "project_document_chunk" else 1 if item["kind"] == "paper_note" else 0,
             item["score"],
             item.get("confidence") or 0,
             item.get("citation_count") or 0,
@@ -215,6 +217,13 @@ def _build_project_private_context(db: Session, project_id: str, query: str) -> 
                     lines.append(f"载体信息：{venue_line}")
             if item.get("citation_count") is not None:
                 lines.append(f"引用量：{item['citation_count']}")
+            if item.get("score_reasons"):
+                lines.append(f"命中原因：{'、'.join(item['score_reasons'])}")
+            lines.append(item["content_excerpt"])
+        elif item["kind"] == "project_document_chunk":
+            lines.append(f"[P{idx}] 内部资料 · {item['title']}")
+            if item.get("source_title"):
+                lines.append(f"来源文件：{item['source_title']}")
             if item.get("score_reasons"):
                 lines.append(f"命中原因：{'、'.join(item['score_reasons'])}")
             lines.append(item["content_excerpt"])

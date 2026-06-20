@@ -154,7 +154,7 @@ class LiteratureSearchTaskTests(unittest.TestCase):
         with patch.object(literature, "create_literature_search_task", return_value=task), \
              patch.object(literature, "mark_literature_search_task_running") as mark_running, \
              patch.object(literature, "complete_literature_search_task") as complete_task, \
-             patch.object(literature.literature_search_agent, "search_by_requirement", return_value=search_result), \
+             patch.object(literature, "run_literature_search_workflow", return_value=search_result), \
              patch.object(literature, "_save_papers_to_db", return_value=0):
             result = literature.search_literature(self.payload)
 

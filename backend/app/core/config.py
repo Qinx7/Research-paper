@@ -11,9 +11,10 @@ class Settings(BaseSettings):
     DATABASE_URL: str = "postgresql://postgres:postgres@localhost:5432/research_agent"
     REDIS_URL: str = "redis://localhost:6379/0"
 
+    # MinIO 配置（生产环境必须通过环境变量设置）
     MINIO_ENDPOINT: str = "localhost:9000"
-    MINIO_ACCESS_KEY: str = "minioadmin"
-    MINIO_SECRET_KEY: str = "minioadmin"
+    MINIO_ACCESS_KEY: str = ""
+    MINIO_SECRET_KEY: str = ""
     MINIO_BUCKET: str = "research-agent"
 
     LLM_PROVIDER: str = "deepseek"
@@ -30,6 +31,7 @@ class Settings(BaseSettings):
     OPENALEX_API_KEY: str = ""
     SEMANTIC_SCHOLAR_API_KEY: str = ""
     CROSSREF_MAILTO: str = ""
+    PUBSCHOLAR_USER_ID: str = ""
 
     # CNKI 搜索配置
     CNKI_HEADLESS: bool = False
@@ -48,8 +50,10 @@ class Settings(BaseSettings):
     SCRAPLING_CQVIP_FALLBACK_ON_EMPTY: bool = True
 
     MAX_UPLOAD_SIZE: int = 50 * 1024 * 1024
+    TESSERACT_CMD: str = ""
 
-    JWT_SECRET_KEY: str = "your_jwt_secret"
+    # JWT 配置（生产环境必须通过环境变量设置强随机密钥）
+    JWT_SECRET_KEY: str = ""
     JWT_ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 1440
 

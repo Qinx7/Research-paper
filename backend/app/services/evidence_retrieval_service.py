@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 
 from ..models.paper import Paper
 from ..models.paper_note import PaperNote
+from ..models.project_document_chunk import ProjectDocumentChunk
 
 STRONG_EVIDENCE_NOTE_TYPES = {"finding", "method", "limitation"}
 
@@ -87,6 +88,35 @@ def retrieve_project_paper_evidence(
     return items[:safe_limit]
 
 
+def retrieve_project_document_chunks(
+    db: Session,
+    project_id: UUID | str,
+    query: str,
+    *,
+    limit: int = 6,
+) -> list[dict[str, Any]]:
+    """检索用户上传并解析入库的项目资料片段。"""
+    tokens = tokenize_evidence_query(query)
+    safe_limit = max(1, min(limit, 30))
+    chunks = (
+        db.query(ProjectDocumentChunk)
+        .filter(ProjectDocumentChunk.project_id == project_id)
+        .order_by(ProjectDocumentChunk.updated_at.desc())
+        .limit(80)
+        .all()
+    )
+
+    items = []
+    for chunk in chunks:
+        item = _document_chunk_to_evidence_item(chunk, project_id, tokens)
+        if item["score"] <= 0 and tokens:
+            continue
+        items.append(item)
+
+    items.sort(key=lambda item: item["score"], reverse=True)
+    return items[:safe_limit]
+
+
 def build_evidence_context(items: list[dict[str, Any]]) -> str:
     """把证据卡片列表格式化为可放进 Agent prompt 的上下文。"""
     if not items:
@@ -97,7 +127,8 @@ def build_evidence_context(items: list[dict[str, Any]]) -> str:
         lines.append(f"[E{index}] 标题：{item['title']}")
         lines.append(f"类型：{item.get('note_type') or 'note'}")
         if item.get("source_title"):
-            lines.append(f"来源文献：{item['source_title']}")
+            source_label = "来源资料" if item.get("kind") == "project_document_chunk" else "来源文献"
+            lines.append(f"{source_label}：{item['source_title']}")
         if item.get("evidence_text"):
             lines.append(f"证据摘录：{item['evidence_text']}")
         elif item.get("content_excerpt"):
@@ -189,6 +220,31 @@ def _paper_to_evidence_item(paper, project_id: UUID | str, tokens: list[str]) ->
     }
 
 
+def _document_chunk_to_evidence_item(chunk, project_id: UUID | str, tokens: list[str]) -> dict[str, Any]:
+    title = getattr(chunk, "title", None) or getattr(chunk, "source_filename", None) or "上传资料"
+    content = getattr(chunk, "content", "") or ""
+    source_filename = getattr(chunk, "source_filename", None) or title
+    score, reasons = _score_document_chunk(
+        tokens=tokens,
+        title=title,
+        content=content,
+        source_filename=source_filename,
+    )
+
+    return {
+        "kind": "project_document_chunk",
+        "title": title,
+        "content_excerpt": (getattr(chunk, "content_excerpt", None) or content)[:600],
+        "score": score,
+        "score_reasons": reasons,
+        "source_title": source_filename,
+        "source": "project_upload",
+        "action_url": f"/api/outcomes/{chunk.outcome_id}/download",
+        "action_label": "下载来源文件",
+        "tags": [getattr(chunk, "source_type", "")] if getattr(chunk, "source_type", None) else [],
+    }
+
+
 def _score_note(
     *,
     tokens: list[str],
@@ -237,6 +293,41 @@ def _score_note(
     if note_type in STRONG_EVIDENCE_NOTE_TYPES:
         score += 1
         add_reason("方法/发现类证据")
+
+    return score, reasons
+
+
+def _score_document_chunk(
+    *,
+    tokens: list[str],
+    title: str,
+    content: str,
+    source_filename: str,
+) -> tuple[int, list[str]]:
+    score = 1 if not tokens else 0
+    reasons: list[str] = []
+    title_text = title.lower()
+    filename_text = source_filename.lower()
+    content_text = content.lower()
+
+    def add_reason(reason: str):
+        if reason not in reasons:
+            reasons.append(reason)
+
+    for token in tokens:
+        if token in title_text:
+            score += 3
+            add_reason("资料标题命中")
+        if token in filename_text:
+            score += 2
+            add_reason("文件名命中")
+        if token in content_text:
+            score += 3
+            add_reason("资料正文命中")
+
+    if content:
+        score += 1
+        add_reason("含可引用资料片段")
 
     return score, reasons
 

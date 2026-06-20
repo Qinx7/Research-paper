@@ -42,6 +42,7 @@ function apiUrl(url: string): string {
 
 import type {
   Project,
+  ProjectWorkspaceSnapshot,
   AnalyzeRequirementResponse,
   SearchLiteratureResponse,
   AnalyzeLiteratureResponse,
@@ -76,6 +77,9 @@ import type {
   DefensePPTOutline,
   DefenseScript,
   OutcomeTypeInfo,
+  OutcomeKnowledgeStatus,
+  AgentWorkflowRun,
+  AgentWorkflowRunDetail,
 } from "./types";
 
 export interface TaskLaunchResponse {
@@ -158,6 +162,16 @@ export async function listProjects(): Promise<Project[]> {
 /** 获取单个项目 */
 export async function getProject(projectId: string): Promise<Project> {
   return authGet<Project>(`${API_BASE_URL}/api/projects/${projectId}`);
+}
+
+/** 获取项目知识与交付工作台快照 */
+export async function getProjectWorkspace(projectId: string): Promise<ProjectWorkspaceSnapshot> {
+  return authGet<ProjectWorkspaceSnapshot>(`${API_BASE_URL}/api/projects/${projectId}/workspace`);
+}
+
+/** 更新项目信息 */
+export function updateProject(projectId: string, params: Partial<Pick<Project, "name" | "research_field" | "selected_topic" | "status">>) {
+  return patch<Project>(`/api/projects/${projectId}`, params);
 }
 
 /** 创建研究项目 */
@@ -319,6 +333,12 @@ export async function listPPTs() {
   return res.json() as Promise<ListPPTsResponse>;
 }
 
+/** 获取当前用户的开题 PPT 文件列表 */
+export async function listProposalPPTFiles() {
+  const result = await listPPTs();
+  return result.files.filter((item) => item.filename.toLowerCase().includes("proposal"));
+}
+
 /** 将搜索结果保存到项目文献库 */
 export function saveProjectPaper(projectId: string, paper: Paper) {
   return post<SavedPaper>(`/api/literature/projects/${projectId}/papers`, {
@@ -433,6 +453,16 @@ export async function getProposal(proposalId: string) {
   return res.json() as Promise<ProposalOut>;
 }
 
+/** 获取项目下最新一份开题报告 */
+export async function getLatestProjectProposal(projectId: string) {
+  const res = await fetch(`${BASE_URL}/api/proposal/project/${projectId}/latest`, { headers: authHeaders() });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || `请求失败 (${res.status})`);
+  }
+  return res.json() as Promise<ProposalOut | null>;
+}
+
 /** 获取可选 PPT 风格列表 */
 export async function listPPTStyles() {
   const res = await fetch(`${BASE_URL}/api/ppt/styles`);
@@ -499,6 +529,31 @@ export async function deleteOutcome(outcomeId: string) {
     headers: authHeaders(),
   });
   if (!res.ok) throw new Error("删除成果失败");
+}
+
+/** 将成果文件解析入项目知识库 */
+export async function indexOutcomeKnowledge(outcomeId: string) {
+  const res = await fetch(`${BASE_URL}/api/outcomes/${outcomeId}/index-knowledge`, {
+    method: "POST",
+    headers: authHeaders(),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || `解析入库失败 (${res.status})`);
+  }
+  return res.json() as Promise<OutcomeKnowledgeStatus>;
+}
+
+/** 获取成果文件知识库入库状态 */
+export async function getOutcomeKnowledgeStatus(outcomeId: string) {
+  const res = await fetch(`${BASE_URL}/api/outcomes/${outcomeId}/knowledge-status`, {
+    headers: authHeaders(),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || `获取解析状态失败 (${res.status})`);
+  }
+  return res.json() as Promise<OutcomeKnowledgeStatus>;
 }
 
 /** AI 汇总项目成果 */
@@ -850,4 +905,20 @@ export function login(params: { email: string; password: string }) {
 /** 获取当前登录用户信息 */
 export async function getMe() {
   return authGet<import("./types").UserInfo>(`${BASE_URL}/api/auth/me`);
+}
+
+// ========== Agent Workflow 执行记录 ==========
+
+/** 查询当前用户的 Agent workflow 执行记录 */
+export async function listAgentWorkflowRuns(params?: { limit?: number; offset?: number }) {
+  const searchParams = new URLSearchParams();
+  if (params?.limit) searchParams.set("limit", String(params.limit));
+  if (params?.offset) searchParams.set("offset", String(params.offset));
+  const qs = searchParams.toString();
+  return authGet<AgentWorkflowRun[]>(`${BASE_URL}/api/agent-workflows/runs${qs ? `?${qs}` : ""}`);
+}
+
+/** 查询单次 Agent workflow 的节点明细 */
+export async function getAgentWorkflowRun(runId: string) {
+  return authGet<AgentWorkflowRunDetail>(`${BASE_URL}/api/agent-workflows/runs/${runId}`);
 }

@@ -10,6 +10,7 @@ import type {
 import type { TaskStatus } from "../lib/api";
 import OutcomeManager from "./OutcomeManager";
 import StageWrapper from "./StageWrapper";
+import { buildEditedChapterPayload, getDraftCompletionSummary } from "@/lib/draftKnowledge";
 
 // ========== 章节映射 ==========
 
@@ -116,6 +117,7 @@ export default function PaperWorkflow({ projectId, onBack }: Props) {
   // 通用
   const [error, setError] = useState<string | null>(null);
   const [downloadFormat, setDownloadFormat] = useState<"docx" | "pdf">("docx");
+  const activeDraftSummary = getDraftCompletionSummary(activeDraft, CHAPTER_KEYS);
 
   // ---- 加载草稿列表 ----
   const loadDrafts = useCallback(async () => {
@@ -230,11 +232,11 @@ export default function PaperWorkflow({ projectId, onBack }: Props) {
     if (!activeDraft || !editingChapter) return;
     try {
       const content = activeDraft.content || {};
-      content[editingChapter] = {
-        ...(content[editingChapter] || {}),
-        content: editContent,
-        status: "edited",
-      };
+      content[editingChapter] = buildEditedChapterPayload(
+        content[editingChapter],
+        content[editingChapter]?.title || CHAPTER_LABELS[editingChapter],
+        editContent,
+      );
       await api.updateDraft(activeDraft.id, { content });
       const updated = await api.getDraft(activeDraft.id);
       setActiveDraft(updated);
@@ -476,12 +478,12 @@ export default function PaperWorkflow({ projectId, onBack }: Props) {
                     <div className="mt-4">
                       <div className="mb-1.5 flex items-center justify-between text-[11px] text-[#5c5242]">
                         <span>完成进度</span>
-                        <span>{Math.round((activeDraft.sections.filter((s) => s.status !== "draft").length / CHAPTER_KEYS.length) * 100)}%</span>
+                        <span>{activeDraftSummary.progress}%</span>
                       </div>
                       <div className="h-[3px] overflow-hidden rounded-full bg-[#ddd8c8]">
                         <div
                           className="h-full rounded-full bg-[#1b2d1b]"
-                          style={{ width: `${(activeDraft.sections.filter((s) => s.status !== "draft").length / CHAPTER_KEYS.length) * 100}%` }}
+                          style={{ width: `${activeDraftSummary.progress}%` }}
                         />
                       </div>
                     </div>
@@ -507,7 +509,12 @@ export default function PaperWorkflow({ projectId, onBack }: Props) {
                           }}
                         >
                           <div className="truncate font-medium">{d.title}</div>
-                          <div className="mt-0.5 text-[10.5px] text-[#9e9282]">v{d.version} · {d.sections.filter((s) => s.status !== "draft").length}/6 章</div>
+                          <div className="mt-0.5 text-[10.5px] text-[#9e9282]">
+                            {(() => {
+                              const summary = getDraftCompletionSummary(d, CHAPTER_KEYS);
+                              return `v${d.version} · ${summary.completedCount}/${summary.totalCount} 章`;
+                            })()}
+                          </div>
                         </button>
                       ))}
                     </div>
@@ -546,7 +553,7 @@ export default function PaperWorkflow({ projectId, onBack }: Props) {
                                 title: CHAPTER_LABELS[key],
                                 content: section?.content || "",
                                 status: section?.status || "draft",
-                                citations: [],
+                                citations: activeDraft.content?.[key]?.citations || [],
                                 data_based: Boolean(dataBased),
                               });
                             }}

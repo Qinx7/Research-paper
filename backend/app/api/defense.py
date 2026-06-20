@@ -43,7 +43,7 @@ def _build_outcomes_summary(db: Session, project_id) -> str:
 
 
 @router.get("/ppt/styles", response_model=list[PPTStyleOut])
-def list_styles():
+def list_styles(current_user: User = Depends(get_current_user)):
     """列出可选 PPT 风格"""
     return defense_ppt_agent.list_styles()
 

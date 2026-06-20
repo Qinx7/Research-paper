@@ -31,6 +31,12 @@ import type {
   Project,
 } from "@/lib/types";
 import { CHAT_THEME } from "@/components/chat/chatTheme";
+import {
+  buildEditedChapterPayload,
+  getDraftChapterRecord,
+  getDraftCompletionSummary,
+  getDraftReferences,
+} from "@/lib/draftKnowledge";
 
 const CHAPTER_KEYS = [
   "chapter_1_introduction",
@@ -167,13 +173,13 @@ export default function WritingPage() {
   const latestDesign = designs[0] ?? null;
   const designContent = (latestDesign?.content ?? null) as DesignContent | null;
   const activeSection = activeDraft ? getSection(activeDraft, activeChapterKey) : null;
+  const activeChapterRecord = getDraftChapterRecord(activeDraft, activeChapterKey);
   const wordCount = editorContent.replace(/\s+/g, "").length;
-  const completedCount = activeDraft?.sections.filter((section) => section.status !== "draft").length ?? 0;
-  const progress = Math.round((completedCount / CHAPTER_KEYS.length) * 100);
+  const { completedCount, progress } = getDraftCompletionSummary(activeDraft, CHAPTER_KEYS);
   const currentTitle = activeSection?.title || FALLBACK_CHAPTERS[activeChapterKey] || "章节";
   const isDirty = activeSection ? editorContent !== activeSection.content : Boolean(editorContent);
   const designReferences = designContent?.references || [];
-  const draftReferences = (activeDraft?.references || []).map(formatDraftReference).filter(Boolean);
+  const draftReferences = getDraftReferences(activeDraft);
   const references = [...designReferences, ...draftReferences].filter(Boolean);
   const hasDesign = Boolean(latestDesign);
   const hasOutcomes = outcomes.length > 0;
@@ -188,8 +194,10 @@ export default function WritingPage() {
     { label: hasDesign ? "有项目设计" : "缺项目设计", tone: hasDesign ? "good" : "warn" },
     { label: hasOutcomes ? "有成果材料" : "缺成果材料", tone: hasOutcomes ? "good" : "warn" },
     { label: hasReferences ? "有引用依据" : "缺引用依据", tone: hasReferences ? "good" : "warn" },
-    ...(isResultSensitiveChapter ? [{ label: "结果章节需真实数据", tone: "warn" }] : []),
+    ...(isResultSensitiveChapter ? [{ label: activeChapterRecord?.data_based ? "当前章节含真实结果标记" : "结果章节需真实数据", tone: "warn" }] : []),
   ] as { label: string; tone: "good" | "warn" }[];
+  const chapterCitations = activeChapterRecord?.citations || [];
+  const chapterNoteMatches = paperNotesForChapter(activeChapterKey, references, draftReferences);
 
   const loadDraftById = useCallback(async (draftId: string) => {
     setDraftLoading(true);
@@ -236,12 +244,7 @@ export default function WritingPage() {
     setError(null);
     try {
       const content = { ...(activeDraft.content || {}) };
-      content[activeChapterKey] = {
-        title: currentTitle,
-        content: editorContent,
-        status: editorContent.trim() ? "edited" : "draft",
-        data_based: content[activeChapterKey]?.data_based ?? false,
-      };
+      content[activeChapterKey] = buildEditedChapterPayload(content[activeChapterKey], currentTitle, editorContent);
       const updated = await updateDraft(activeDraft.id, { content });
       setActiveDraft(updated);
       setNotice("已保存当前章节");
@@ -634,6 +637,27 @@ export default function WritingPage() {
                   ))}
                 </SidePanel>
 
+                <SidePanel title="当前章节知识依据">
+                  {chapterCitations.length > 0 ? (
+                    chapterCitations.slice(0, 6).map((citation, index) => (
+                      <ReferenceItem key={`${citation}-${index}`} prefix={`引用 ${index + 1}`} text={citation} actionable />
+                    ))
+                  ) : (
+                    <p className="text-[12px] leading-6" style={{ color: CHAT_THEME.mid }}>
+                      当前章节还没有沉淀引用。先生成章节或在项目文献中保存依据后，这里会显示本章直接使用的引用。
+                    </p>
+                  )}
+
+                  {chapterNoteMatches.length > 0 && (
+                    <div className="mt-4 border-t pt-4" style={{ borderColor: CHAT_THEME.border }}>
+                      <p className="mb-2 text-[11px] tracking-wide" style={{ color: CHAT_THEME.low }}>关联证据线索</p>
+                      {chapterNoteMatches.map((item, index) => (
+                        <ReferenceItem key={`${item}-${index}`} prefix={`线索 ${index + 1}`} text={item} actionable />
+                      ))}
+                    </div>
+                  )}
+                </SidePanel>
+
                 <SidePanel title="生成与检查">
                   <ActionButton label={generating ? "生成中..." : "生成当前章节"} onClick={handleGenerateChapter} disabled={!activeDraft || generating} />
                   <ActionButton label={generating ? "生成中..." : "生成摘要"} onClick={handleGenerateAbstract} disabled={!activeDraft || generating} />
@@ -671,13 +695,13 @@ export default function WritingPage() {
                     </p>
                   )}
                   {(designContent?.research_questions || []).slice(0, 3).map((item, index) => (
-                    <ReferenceItem key={`question-${index}`} prefix="问题" text={item} />
+                    <ReferenceItem key={`question-${index}`} prefix="问题" text={item} actionable />
                   ))}
                   {(designContent?.methods || []).slice(0, 3).map((item, index) => (
-                    <ReferenceItem key={`method-${index}`} prefix="方法" text={item} />
+                    <ReferenceItem key={`method-${index}`} prefix="方法" text={item} actionable />
                   ))}
                   {designReferences.slice(0, 5).map((reference, index) => (
-                    <ReferenceItem key={`${reference}-${index}`} prefix={`文献 ${index + 1}`} text={reference} />
+                    <ReferenceItem key={`${reference}-${index}`} prefix={`文献 ${index + 1}`} text={reference} actionable />
                   ))}
                   {!latestDesign && (
                     <p className="text-[12px] leading-6" style={{ color: CHAT_THEME.mid }}>
@@ -688,7 +712,7 @@ export default function WritingPage() {
 
                 <SidePanel title="草稿引用">
                   {draftReferences.slice(0, 6).map((reference, index) => (
-                    <ReferenceItem key={`${reference}-${index}`} prefix={`引用 ${index + 1}`} text={reference} />
+                    <ReferenceItem key={`${reference}-${index}`} prefix={`引用 ${index + 1}`} text={reference} actionable />
                   ))}
                   {draftReferences.length === 0 && (
                     <p className="text-[12px] leading-6" style={{ color: CHAT_THEME.mid }}>
@@ -815,13 +839,15 @@ function getChapterSuggestions(chapterKey: string, hasOutcomes: boolean) {
   ];
 }
 
-function formatDraftReference(reference: Record<string, unknown>) {
-  const title = typeof reference.title === "string" ? reference.title : "";
-  const year = typeof reference.year === "number" || typeof reference.year === "string" ? ` (${reference.year})` : "";
-  const source = typeof reference.source === "string" ? ` · ${reference.source}` : "";
-  const doi = typeof reference.doi === "string" ? ` · DOI: ${reference.doi}` : "";
-  const url = typeof reference.url === "string" ? ` · ${reference.url}` : "";
-  return title ? `${title}${year}${source}${doi || url}` : JSON.stringify(reference);
+function paperNotesForChapter(chapterKey: string, references: string[], draftReferences: string[]) {
+  const signals = [...references, ...draftReferences];
+  if (chapterKey === "chapter_1_introduction" || chapterKey === "chapter_2_theory") {
+    return signals.filter((item) => item.includes("文献") || item.includes("DOI")).slice(0, 4);
+  }
+  if (chapterKey === "chapter_4_implementation" || chapterKey === "chapter_5_experiment") {
+    return signals.filter((item) => !item.includes("文献")).slice(0, 4);
+  }
+  return signals.slice(0, 4);
 }
 
 function ToolbarButton({
@@ -1011,11 +1037,25 @@ function Suggestion({ text }: { text: string }) {
   );
 }
 
-function ReferenceItem({ prefix, text }: { prefix: string; text: string }) {
+function ReferenceItem({ prefix, text, actionable = false }: { prefix: string; text: string; actionable?: boolean }) {
   return (
     <div className="mb-2 rounded-lg px-3 py-2 text-[11px] leading-5" style={{ background: CHAT_THEME.bg, color: CHAT_THEME.mid }}>
-      <span className="font-medium" style={{ color: CHAT_THEME.text }}>{prefix}：</span>
-      {text}
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0 break-words">
+          <span className="font-medium" style={{ color: CHAT_THEME.text }}>{prefix}：</span>
+          {text}
+        </div>
+        {actionable ? (
+          <button
+            type="button"
+            onClick={() => navigator.clipboard?.writeText(text)}
+            className="shrink-0 rounded border px-2 py-1 text-[10px]"
+            style={{ borderColor: CHAT_THEME.border, color: CHAT_THEME.low }}
+          >
+            复制
+          </button>
+        ) : null}
+      </div>
     </div>
   );
 }

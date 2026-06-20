@@ -19,3 +19,23 @@ def ensure_conversation_user_column(db: Session) -> None:
     except Exception as exc:
         db.rollback()
         logger.warning("检查 conversations.user_id 兼容列失败: %s", exc)
+
+
+def ensure_research_direction_content_column(db: Session) -> None:
+    """确保旧数据库的 research_directions 表包含 content 字段。"""
+    try:
+        db.execute(text("ALTER TABLE research_directions ADD COLUMN IF NOT EXISTS content JSONB"))
+        db.commit()
+    except Exception as exc:
+        db.rollback()
+        logger.warning("检查 research_directions.content 兼容列失败: %s", exc)
+
+
+def ensure_project_design_content_column(db: Session) -> None:
+    """确保旧数据库的 project_designs 表包含 content 字段。"""
+    try:
+        db.execute(text("ALTER TABLE project_designs ADD COLUMN IF NOT EXISTS content JSONB"))
+        db.commit()
+    except Exception as exc:
+        db.rollback()
+        logger.warning("检查 project_designs.content 兼容列失败: %s", exc)

@@ -3,7 +3,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { listProjects } from "@/lib/api";
+import { deleteProject, listProjects } from "@/lib/api";
 import { useAuth } from "@/lib/AuthContext";
 import type { Project } from "@/lib/types";
 
@@ -14,6 +14,8 @@ export default function ProjectsPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [query, setQuery] = useState("");
+  const [deletingProjectId, setDeletingProjectId] = useState<string | null>(null);
+  const [confirmProjectId, setConfirmProjectId] = useState<string | null>(null);
 
   useEffect(() => {
     if (authLoading) return;
@@ -44,6 +46,20 @@ export default function ProjectsPage() {
         .includes(keyword),
     );
   }, [projects, query]);
+
+  const handleDeleteProject = async (projectId: string) => {
+    setDeletingProjectId(projectId);
+    setError(null);
+    try {
+      await deleteProject(projectId);
+      setProjects((items) => items.filter((item) => item.id !== projectId));
+      setConfirmProjectId(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "删除项目失败");
+    } finally {
+      setDeletingProjectId(null);
+    }
+  };
 
   if (authLoading || loading) {
     return <CenteredState title="正在加载项目..." description="正在读取你的研究项目列表。" />;
@@ -110,7 +126,15 @@ export default function ProjectsPage() {
         {filteredProjects.length ? (
           <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
             {filteredProjects.map((project) => (
-              <ProjectCard key={project.id} project={project} onOpen={() => router.push(`/projects/${project.id}`)} />
+              <ProjectCard
+                key={project.id}
+                project={project}
+                deleting={deletingProjectId === project.id}
+                confirmDelete={confirmProjectId === project.id}
+                onAskDelete={() => setConfirmProjectId((current) => current === project.id ? null : project.id)}
+                onDelete={() => handleDeleteProject(project.id)}
+                onOpen={() => router.push(`/projects/${project.id}`)}
+              />
             ))}
           </div>
         ) : (
@@ -121,14 +145,41 @@ export default function ProjectsPage() {
   );
 }
 
-function ProjectCard({ project, onOpen }: { project: Project; onOpen: () => void }) {
+function ProjectCard({
+  project,
+  deleting,
+  confirmDelete,
+  onAskDelete,
+  onDelete,
+  onOpen,
+}: {
+  project: Project;
+  deleting: boolean;
+  confirmDelete: boolean;
+  onAskDelete: () => void;
+  onDelete: () => void;
+  onOpen: () => void;
+}) {
   return (
     <article className="flex min-h-[230px] flex-col rounded-[24px] border border-[#dfe5eb] bg-white p-5 shadow-[0_14px_34px_rgba(16,19,24,0.06)]">
       <div className="mb-4 flex items-start justify-between gap-3">
         <span className="rounded-full border border-[#cfe3f4] bg-[#edf7ff] px-3 py-1 text-xs font-black text-[#126fb0]">
           {project.research_field || "未设置领域"}
         </span>
-        <span className="text-xs font-bold text-[#9aa4ae]">{formatDate(project.updated_at || project.created_at)}</span>
+        <div className="flex items-center gap-2">
+          <span className="text-xs font-bold text-[#9aa4ae]">{formatDate(project.updated_at || project.created_at)}</span>
+          <button
+            type="button"
+            onClick={onAskDelete}
+            className={`rounded-full border px-2 py-1 text-[10px] font-black transition-colors ${
+              confirmDelete
+                ? "border-[#f0b9b9] bg-[#fff0f0] text-[#9a2f2f]"
+                : "border-[#dfe5eb] bg-white text-[#8a949e] hover:border-[#f0b9b9] hover:text-[#9a2f2f]"
+            }`}
+          >
+            {confirmDelete ? "确认删除?" : "删除"}
+          </button>
+        </div>
       </div>
       <h2 className="line-clamp-2 text-xl font-black tracking-[-0.03em] text-[#17212b]">{project.name}</h2>
       <p className="mt-3 line-clamp-3 text-sm leading-7 text-[#66717d]">
@@ -136,14 +187,26 @@ function ProjectCard({ project, onOpen }: { project: Project; onOpen: () => void
       </p>
       <div className="mt-auto flex items-center justify-between pt-6">
         <span className="rounded-full bg-[#f4f6f8] px-3 py-1 text-xs font-bold text-[#7a8490]">{project.status || "active"}</span>
-        <button
-          type="button"
-          onClick={onOpen}
-          className="inline-flex items-center gap-2 rounded-2xl bg-[#101318] px-4 py-2 text-sm font-black text-white transition-colors hover:bg-[#26313b]"
-        >
-          进入项目
-          <IconArrowRight />
-        </button>
+        <div className="flex items-center gap-2">
+          {confirmDelete ? (
+            <button
+              type="button"
+              onClick={onDelete}
+              disabled={deleting}
+              className="inline-flex items-center gap-2 rounded-2xl bg-[#9a2f2f] px-4 py-2 text-sm font-black text-white transition-colors hover:bg-[#7f2424] disabled:opacity-50"
+            >
+              {deleting ? "删除中..." : "确认删除"}
+            </button>
+          ) : null}
+          <button
+            type="button"
+            onClick={onOpen}
+            className="inline-flex items-center gap-2 rounded-2xl bg-[#101318] px-4 py-2 text-sm font-black text-white transition-colors hover:bg-[#26313b]"
+          >
+            进入项目
+            <IconArrowRight />
+          </button>
+        </div>
       </div>
     </article>
   );

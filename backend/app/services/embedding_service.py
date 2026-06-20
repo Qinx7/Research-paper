@@ -1,7 +1,5 @@
 """Embedding 服务 —— OpenAI text-embedding API 封装 + pgvector 向量存储/检索"""
-import json
 import logging
-from typing import Sequence
 
 import httpx
 from sqlalchemy import text as sa_text
@@ -79,13 +77,6 @@ def embed_text(text: str) -> list[float] | None:
 def _embedding_to_str(vec: list[float]) -> str:
     """将 embedding 列表转为 pgvector 接受的字符串格式 [0.1,0.2,...]"""
     return "[" + ",".join(str(v) for v in vec) + "]"
-
-
-def _str_to_embedding(s: str) -> list[float]:
-    """将 pgvector 返回的字符串解析为 float 列表"""
-    if not s:
-        return []
-    return [float(x) for x in s.strip("[]").split(",")]
 
 
 def store_paper_embedding(
@@ -288,14 +279,14 @@ def search_similar_papers(
     db: Session,
     query: str,
     top_k: int = 5,
-    threshold: float = 0.3,
+    min_similarity: float = 0.7,
 ) -> list[dict]:
     """语义检索相关论文。
 
     参数：
         query: 用户查询文本
         top_k: 返回最相似的前 k 篇
-        threshold: 余弦距离阈值（越小越相似，0.3 ≈ 余弦相似度 0.7）
+        min_similarity: 最低相似度阈值（0~1，越大越相似）
     返回：
         相似论文列表，每项包含 title/authors/year/venue/abstract/source/similarity
     """
@@ -311,13 +302,13 @@ def search_similar_papers(
                 "SELECT title, authors, year, venue, doi, abstract, source, "
                 "1 - (embedding <=> CAST(:embedding AS vector)) AS similarity "
                 "FROM document_vectors "
-                "WHERE embedding <=> CAST(:embedding AS vector) < :threshold "
+                "WHERE 1 - (embedding <=> CAST(:embedding AS vector)) >= :min_similarity "
                 "ORDER BY embedding <=> CAST(:embedding AS vector) "
                 "LIMIT :limit"
             ),
             {
                 "embedding": embedding_str,
-                "threshold": threshold,
+                "min_similarity": min_similarity,
                 "limit": top_k,
             },
         ).fetchall()
@@ -331,7 +322,7 @@ def search_similar_papers(
                 "doi": row.doi,
                 "abstract": row.abstract,
                 "source": row.source,
-                "similarity": round(row.similarity, 4) if row.similarity else 0,
+                "similarity": round(row.similarity, 4) if row.similarity is not None else 0,
             }
             for row in rows
         ]

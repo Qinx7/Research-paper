@@ -117,6 +117,10 @@ def get_object_stream(key: str):
             pass  # 回退到本地
 
     # 本地 fallback
+    # 防止路径穿越：拒绝包含 .. 或绝对路径的 key
+    if ".." in key or key.startswith("/") or key.startswith("\\"):
+        return None
+
     safe = os.path.abspath(os.path.join(LOCAL_STORAGE_ROOT, key))
     if not safe.startswith(LOCAL_STORAGE_ROOT):
         return None
@@ -146,11 +150,27 @@ def save_bytes(data: bytes, key: str, content_type: str = "application/octet-str
             pass
 
     # 本地存储 fallback
+    # 防止路径穿越：拒绝包含 .. 或绝对路径的 key
+    if ".." in key or key.startswith("/") or key.startswith("\\"):
+        raise ValueError("非法的文件路径")
+
     safe_subdir = os.path.dirname(key) or "files"
     target_dir = os.path.join(LOCAL_STORAGE_ROOT, safe_subdir)
+
+    # 验证目标目录在允许范围内
+    target_dir_abs = os.path.abspath(target_dir)
+    if not target_dir_abs.startswith(LOCAL_STORAGE_ROOT):
+        raise ValueError("非法的文件路径")
+
     os.makedirs(target_dir, exist_ok=True)
     filename = os.path.basename(key) or "file"
     file_path = os.path.join(target_dir, filename)
+
+    # 最终路径检查
+    file_path_abs = os.path.abspath(file_path)
+    if not file_path_abs.startswith(LOCAL_STORAGE_ROOT):
+        raise ValueError("非法的文件路径")
+
     with open(file_path, "wb") as f:
         f.write(data)
     return key

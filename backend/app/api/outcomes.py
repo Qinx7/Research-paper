@@ -14,9 +14,11 @@ from ..schemas.outcome import (
     OutcomeCreate, OutcomeUpdate, OutcomeOut, OutcomeSummary, ReadinessCheck,
     OUTCOME_TYPES, OutcomeTypeInfo,
 )
+from ..schemas.project_document import OutcomeKnowledgeStatus
 from ..services.upload_service import save_upload, delete_upload, get_object_stream, validate_file_type
 from ..services.auth_dependency import get_current_user
 from ..services.ownership import get_owned_outcome, get_owned_project, query_owned_outcomes
+from ..services.project_knowledge_service import get_outcome_knowledge_status, index_outcome_document
 from ..agents.outcome_agent import outcome_agent
 
 logger = logging.getLogger(__name__)
@@ -188,6 +190,28 @@ def download_outcome(
             "Content-Length": str(size),
         },
     )
+
+
+@router.post("/{outcome_id}/index-knowledge", response_model=OutcomeKnowledgeStatus)
+def index_outcome_knowledge(
+    outcome_id: UUID,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """将成果文件解析、切分并写入项目知识库。"""
+    outcome = get_owned_outcome(outcome_id, current_user, db)
+    return index_outcome_document(db, outcome)
+
+
+@router.get("/{outcome_id}/knowledge-status", response_model=OutcomeKnowledgeStatus)
+def get_knowledge_status(
+    outcome_id: UUID,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """获取成果文件解析入知识库的当前状态。"""
+    outcome = get_owned_outcome(outcome_id, current_user, db)
+    return get_outcome_knowledge_status(outcome)
 
 
 @router.post("/{project_id}/summarize", response_model=OutcomeSummary)

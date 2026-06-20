@@ -20,7 +20,9 @@ import type {
   ResearchDirection,
   ResearchMode,
   SearchEvidenceBundle,
+  SearchSummary,
   SourceStatusInfo,
+  TopicResearchSnapshot,
 } from "@/lib/types";
 
 const SUGGESTIONS = [
@@ -44,6 +46,7 @@ const SCOPE_OPTIONS: { value: LibraryScope; label: string }[] = [
 const SOURCE_LABEL: Record<string, string> = {
   cnki: "知网",
   cqvip: "维普",
+  pubscholar: "PubScholar",
   pubmed: "PubMed",
   openalex: "OpenAlex",
   semantic_scholar: "Semantic Scholar",
@@ -53,6 +56,7 @@ const SOURCE_LABEL: Record<string, string> = {
 
 const QUALITY_SOURCE_OPTIONS = [
   { value: "pubmed", label: "PubMed", kind: "真实来源" },
+  { value: "pubscholar", label: "PubScholar", kind: "真实来源" },
   { value: "cnki", label: "知网", kind: "真实来源" },
   { value: "cqvip", label: "维普", kind: "真实来源" },
   { value: "openalex", label: "OpenAlex", kind: "真实来源" },
@@ -62,23 +66,46 @@ const QUALITY_SOURCE_OPTIONS = [
 ] as const;
 
 const QUALITY_TAG_OPTIONS = [
-  { value: "ieee", label: "IEEE", inferred: true },
-  { value: "acm", label: "ACM", inferred: true },
-  { value: "ei", label: "EI", inferred: true },
-  { value: "jcr", label: "JCR", inferred: true },
-  { value: "cas", label: "中科院分区", inferred: true },
-  { value: "pku_core", label: "北大核心", inferred: true },
+  { value: "ieee", label: "IEEE", verification: "可核验" },
+  { value: "acm", label: "ACM", verification: "可核验" },
+  { value: "pku_core", label: "北大核心", verification: "白名单" },
+  { value: "ei", label: "EI", verification: "需授权目录" },
+  { value: "jcr", label: "JCR", verification: "需授权目录" },
+  { value: "cas", label: "中科院分区", verification: "需授权目录" },
 ] as const;
+
+const AUTHORITY_LABEL: Record<string, string> = {
+  ieee: "IEEE",
+  acm: "ACM",
+  ei: "EI",
+  jcr: "JCR",
+  cas: "中科院分区",
+  pku_core: "北大核心",
+};
 
 type SearchHistoryItem = {
   id: string;
   query: string;
   mode: ResearchMode;
   scope: LibraryScope;
+  filters?: LiteratureQualityFilters;
+  snapshot?: {
+    papers: Paper[];
+    sourceStatuses: Record<string, SourceStatusInfo>;
+    searchSummary: SearchSummary | null;
+    currentTaskId: string | null;
+    topicResearch?: TopicResearchSnapshot | null;
+  };
   created_at: string;
 };
 
 const SEARCH_HISTORY_STORAGE_KEY = "learning_agent_home_search_history";
+const DEFAULT_FILTERS: LiteratureQualityFilters = {
+  sources: [],
+  open_access_only: false,
+  quality_tags: [],
+  min_citation_count: 0,
+};
 
 export default function HomeSearchLanding() {
   const router = useRouter();
@@ -89,21 +116,19 @@ export default function HomeSearchLanding() {
   const [scope, setScope] = useState<LibraryScope>("all");
   const [papers, setPapers] = useState<Paper[]>([]);
   const [sourceStatuses, setSourceStatuses] = useState<Record<string, SourceStatusInfo>>({});
+  const [searchSummary, setSearchSummary] = useState<SearchSummary | null>(null);
   const [filtersOpen, setFiltersOpen] = useState(false);
-  const [filters, setFilters] = useState<LiteratureQualityFilters>({
-    sources: [],
-    open_access_only: false,
-    quality_tags: [],
-    min_citation_count: 0,
-  });
+  const [filters, setFilters] = useState<LiteratureQualityFilters>({ ...DEFAULT_FILTERS });
   const [currentTaskId, setCurrentTaskId] = useState<string | null>(null);
   const [projects, setProjects] = useState<Project[]>([]);
   const [selectedProjectId, setSelectedProjectId] = useState<string>("");
-  const [savingPaperTitle, setSavingPaperTitle] = useState<string | null>(null);
-  const [savedPaperTitles, setSavedPaperTitles] = useState<string[]>([]);
+  const [savingPaperKey, setSavingPaperKey] = useState<string | null>(null);
+  const [savedPaperKeys, setSavedPaperKeys] = useState<string[]>([]);
   const [savingDirectionTitle, setSavingDirectionTitle] = useState<string | null>(null);
   const [savedDirectionTitles, setSavedDirectionTitles] = useState<string[]>([]);
   const [directionSaveMessage, setDirectionSaveMessage] = useState<string | null>(null);
+  const [lastSavedDirectionMeta, setLastSavedDirectionMeta] = useState<{ projectId: string; directionId: string } | null>(null);
+  const [topicResearchSnapshot, setTopicResearchSnapshot] = useState<TopicResearchSnapshot | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [referencesOpen, setReferencesOpen] = useState(false);
@@ -114,6 +139,7 @@ export default function HomeSearchLanding() {
   const [conversationId, setConversationId] = useState<string | null>(null);
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [searchHistories, setSearchHistories] = useState<SearchHistoryItem[]>([]);
+  const [confirmDeleteSearchHistoryId, setConfirmDeleteSearchHistoryId] = useState<string | null>(null);
   const [streamingContent, setStreamingContent] = useState("");
   const [streamingEvidence, setStreamingEvidence] = useState<SearchEvidenceBundle | null>(null);
   const [isStreaming, setIsStreaming] = useState(false);
@@ -151,19 +177,36 @@ export default function HomeSearchLanding() {
     try {
       const raw = window.localStorage.getItem(SEARCH_HISTORY_STORAGE_KEY);
       const parsed = raw ? JSON.parse(raw) : [];
-      if (Array.isArray(parsed)) setSearchHistories(parsed.slice(0, 20));
+      if (Array.isArray(parsed)) {
+        const normalized = parsed.slice(0, 20).map(normalizeSearchHistoryItem);
+        setSearchHistories(normalized);
+        window.localStorage.setItem(SEARCH_HISTORY_STORAGE_KEY, JSON.stringify(normalized));
+      }
     } catch {
       setSearchHistories([]);
     }
   }, []);
 
-  const rememberSearchHistory = useCallback((nextQuery: string, nextMode: ResearchMode, nextScope: LibraryScope) => {
+  const rememberSearchHistory = useCallback((
+    nextQuery: string,
+    nextMode: ResearchMode,
+    nextScope: LibraryScope,
+    nextFilters: LiteratureQualityFilters,
+    snapshot?: SearchHistoryItem["snapshot"],
+  ) => {
     setSearchHistories((current) => {
       const nextItem: SearchHistoryItem = {
         id: `${Date.now()}-${nextQuery}`,
         query: nextQuery,
         mode: nextMode,
         scope: nextScope,
+        filters: {
+          sources: [...(nextFilters.sources || [])],
+          open_access_only: nextFilters.open_access_only ?? false,
+          quality_tags: [...(nextFilters.quality_tags || [])],
+          min_citation_count: nextFilters.min_citation_count ?? 0,
+        },
+        snapshot,
         created_at: new Date().toISOString(),
       };
       const deduped = current.filter((item) => item.query !== nextQuery || item.mode !== nextMode || item.scope !== nextScope);
@@ -401,7 +444,6 @@ export default function HomeSearchLanding() {
     setSavedDirectionTitles([]);
     setDirectionSaveMessage(null);
     setReferencesOpen(true);
-    rememberSearchHistory(trimmed, nextMode, nextScope);
 
     try {
       const keywordPayload = buildKeywordPayload(trimmed, nextScope);
@@ -418,12 +460,24 @@ export default function HomeSearchLanding() {
       });
       setPapers(result.papers ?? []);
       setSourceStatuses(result.source_statuses ?? {});
+      setSearchSummary(result.search_summary ?? null);
       setCurrentTaskId(result.task_id ?? null);
+      setTopicResearchSnapshot(null);
+      rememberSearchHistory(trimmed, nextMode, nextScope, filters, {
+        papers: result.papers ?? [],
+        sourceStatuses: result.source_statuses ?? {},
+        searchSummary: result.search_summary ?? null,
+        currentTaskId: result.task_id ?? null,
+        topicResearch: null,
+      });
     } catch (err) {
       setPapers([]);
       setSourceStatuses({});
+      setSearchSummary(null);
       setCurrentTaskId(null);
+      setTopicResearchSnapshot(null);
       setError(err instanceof Error ? err.message : "检索失败，请稍后重试");
+      rememberSearchHistory(trimmed, nextMode, nextScope, filters);
     } finally {
       setLoading(false);
     }
@@ -435,8 +489,11 @@ export default function HomeSearchLanding() {
     setActiveQuery("");
     setPapers([]);
     setSourceStatuses({});
+    setSearchSummary(null);
     setCurrentTaskId(null);
+    setTopicResearchSnapshot(null);
     setError(null);
+    setFilters({ ...DEFAULT_FILTERS });
     setSavedDirectionTitles([]);
     setDirectionSaveMessage(null);
     setReferencesOpen(false);
@@ -444,15 +501,89 @@ export default function HomeSearchLanding() {
   };
 
   const handleSelectSearchHistory = (item: SearchHistoryItem) => {
+    if (item.snapshot) {
+      setWorkspaceView("topic");
+      setQuery(item.query);
+      setMode(item.mode);
+      setScope(item.scope);
+      setFiltersOpen(false);
+      setFilters({
+        sources: [...(item.filters?.sources || [])],
+        open_access_only: item.filters?.open_access_only ?? false,
+        quality_tags: [...(item.filters?.quality_tags || [])],
+        min_citation_count: item.filters?.min_citation_count ?? 0,
+      });
+      setActiveQuery(item.query);
+      setLoading(false);
+      setError(null);
+      setPapers(item.snapshot.papers);
+      setSourceStatuses(item.snapshot.sourceStatuses);
+      setSearchSummary(item.snapshot.searchSummary);
+      setCurrentTaskId(item.snapshot.currentTaskId);
+      setTopicResearchSnapshot(item.snapshot.topicResearch ?? null);
+      setSavedDirectionTitles([]);
+      setDirectionSaveMessage(null);
+      setReferencesOpen(true);
+      setEntryMenuOpen(false);
+      return;
+    }
     submitSearch(item.query, item.mode, item.scope);
   };
+
+  const handleDeleteSearchHistory = useCallback((id: string) => {
+    setSearchHistories((current) => {
+      const nextItems = current.filter((item) => item.id !== id);
+      window.localStorage.setItem(SEARCH_HISTORY_STORAGE_KEY, JSON.stringify(nextItems));
+      return nextItems;
+    });
+    setConfirmDeleteSearchHistoryId(null);
+  }, []);
+
+  useEffect(() => {
+    if (!confirmDeleteSearchHistoryId) return;
+    const timer = window.setTimeout(() => {
+      setConfirmDeleteSearchHistoryId(null);
+    }, 3000);
+    return () => window.clearTimeout(timer);
+  }, [confirmDeleteSearchHistoryId]);
+
+  useEffect(() => {
+    if (!activeQuery || !papers.length) return;
+    setSearchHistories((current) => {
+      const nextItems: SearchHistoryItem[] = current.map((item) => {
+        if (
+          item.snapshot ||
+          item.query !== activeQuery ||
+          item.mode !== mode ||
+          item.scope !== scope
+        ) {
+          return item;
+        }
+        const previousSnapshot = item.snapshot as SearchHistoryItem["snapshot"] | undefined;
+        return {
+          ...item,
+          filters: normalizeFilters(item.filters),
+          snapshot: {
+            papers,
+            sourceStatuses,
+            searchSummary,
+            currentTaskId,
+            topicResearch: previousSnapshot?.topicResearch ?? topicResearchSnapshot ?? null,
+          },
+        };
+      });
+      window.localStorage.setItem(SEARCH_HISTORY_STORAGE_KEY, JSON.stringify(nextItems));
+      return nextItems;
+    });
+  }, [activeQuery, currentTaskId, mode, papers, scope, searchSummary, sourceStatuses, topicResearchSnapshot]);
 
   const handleSavePaper = async (paper: Paper) => {
     if (!user) {
       router.push("/login");
       return;
     }
-    setSavingPaperTitle(paper.title);
+    const key = getPaperKey(paper);
+    setSavingPaperKey(key);
     try {
       let projectId = selectedProjectId;
       if (!projectId) {
@@ -466,9 +597,9 @@ export default function HomeSearchLanding() {
         setSelectedProjectId(project.id);
       }
       await saveProjectPaper(projectId, paper);
-      setSavedPaperTitles((items) => (items.includes(paper.title) ? items : [...items, paper.title]));
+      setSavedPaperKeys((items) => (items.includes(key) ? items : [...items, key]));
     } finally {
-      setSavingPaperTitle(null);
+      setSavingPaperKey(null);
     }
   };
 
@@ -495,8 +626,9 @@ export default function HomeSearchLanding() {
     setDirectionSaveMessage(null);
     try {
       const projectId = await ensureProjectForTopic(direction.title);
-      await saveResearchDirection({ direction, score, projectId });
+      const saved = await saveResearchDirection({ direction, score, projectId });
       setSavedDirectionTitles((items) => (items.includes(direction.title) ? items : [...items, direction.title]));
+      setLastSavedDirectionMeta({ projectId, directionId: saved.saved_id });
       setDirectionSaveMessage("已保存到项目，可在研究方向页继续查看。");
     } catch (err) {
       setDirectionSaveMessage(err instanceof Error ? err.message : "研究方向保存失败");
@@ -516,6 +648,9 @@ export default function HomeSearchLanding() {
           onHome={startNewSearch}
           onToggle={() => setSidebarCollapsed((current) => !current)}
           onSelectSearchHistory={handleSelectSearchHistory}
+          confirmDeleteSearchHistoryId={confirmDeleteSearchHistoryId}
+          onConfirmDeleteSearchHistory={setConfirmDeleteSearchHistoryId}
+          onDeleteSearchHistory={handleDeleteSearchHistory}
           onLogin={() => router.push("/login")}
           onLogout={() => {
             logout();
@@ -560,6 +695,7 @@ export default function HomeSearchLanding() {
               error={error}
               sourceSummary={sourceSummary}
               sourceStatuses={sourceStatuses}
+              searchSummary={searchSummary}
               workspaceView={workspaceView}
               messages={messages}
               streamingContent={streamingContent}
@@ -581,7 +717,13 @@ export default function HomeSearchLanding() {
               onNewSearch={startNewSearch}
               onOpenReferences={() => setReferencesOpen(true)}
               onSaveDirection={handleSaveDirection}
-              onOpenResearch={() => router.push("/research")}
+              onOpenResearch={() => {
+                if (lastSavedDirectionMeta) {
+                  router.push(`/research?project_id=${lastSavedDirectionMeta.projectId}&direction_id=${lastSavedDirectionMeta.directionId}`);
+                  return;
+                }
+                router.push("/research");
+              }}
               onToggleSidebar={() => setSidebarCollapsed((current) => !current)}
               entryMenuOpen={entryMenuOpen}
               onToggleEntries={() => setEntryMenuOpen((current) => !current)}
@@ -601,8 +743,8 @@ export default function HomeSearchLanding() {
             taskId={currentTaskId}
             projects={projects}
             selectedProjectId={selectedProjectId}
-            savingPaperTitle={savingPaperTitle}
-            savedPaperTitles={savedPaperTitles}
+            savingPaperTitle={savingPaperKey}
+            savedPaperTitles={savedPaperKeys}
             loading={loading}
             error={error}
             userLoggedIn={Boolean(user)}
@@ -624,6 +766,9 @@ function SlimSidebar({
   onHome,
   onToggle,
   onSelectSearchHistory,
+  confirmDeleteSearchHistoryId,
+  onConfirmDeleteSearchHistory,
+  onDeleteSearchHistory,
   onLogin,
   onLogout,
 }: {
@@ -634,6 +779,9 @@ function SlimSidebar({
   onHome: () => void;
   onToggle: () => void;
   onSelectSearchHistory: (item: SearchHistoryItem) => void;
+  confirmDeleteSearchHistoryId: string | null;
+  onConfirmDeleteSearchHistory: (id: string | null) => void;
+  onDeleteSearchHistory: (id: string) => void;
   onLogin: () => void;
   onLogout: () => void;
 }) {
@@ -694,7 +842,44 @@ function SlimSidebar({
                     <IconSearchSmall />
                   </span>
                   <span className={collapsed ? "sr-only" : "min-w-0 flex-1"}>
-                    <span className="block truncate text-sm font-black text-[#26313b]">{item.query}</span>
+                    <span className="flex items-center gap-2">
+                      <span className="block min-w-0 flex-1 truncate text-sm font-black text-[#26313b]">{item.query}</span>
+                      {item.snapshot ? (
+                        <span className="shrink-0 rounded-full border border-[#cfe3f4] bg-[#edf7ff] px-2 py-0.5 text-[10px] font-black text-[#126fb0]">
+                          已缓存
+                        </span>
+                      ) : null}
+                      <span
+                        role="button"
+                        tabIndex={0}
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          if (confirmDeleteSearchHistoryId === item.id) {
+                            onDeleteSearchHistory(item.id);
+                            return;
+                          }
+                          onConfirmDeleteSearchHistory(item.id);
+                        }}
+                        onKeyDown={(event) => {
+                          if (event.key === "Enter" || event.key === " ") {
+                            event.preventDefault();
+                            event.stopPropagation();
+                            if (confirmDeleteSearchHistoryId === item.id) {
+                              onDeleteSearchHistory(item.id);
+                              return;
+                            }
+                            onConfirmDeleteSearchHistory(item.id);
+                          }
+                        }}
+                        className={`grid h-6 min-w-6 shrink-0 place-items-center rounded-full border bg-transparent text-[#9aa4ae] opacity-0 transition-all group-hover:opacity-100 ${
+                          confirmDeleteSearchHistoryId === item.id
+                            ? "border-[#f0d4d4] bg-[#fff5f5] px-2 text-[10px] font-black text-[#a53d3d] opacity-100"
+                            : "w-6 border-transparent hover:border-[#f0d4d4] hover:bg-[#fff5f5] hover:text-[#a53d3d]"
+                        }`}
+                      >
+                        {confirmDeleteSearchHistoryId === item.id ? "确认" : <IconClose />}
+                      </span>
+                    </span>
                     <span className="mt-1 block text-[11px] font-semibold text-[#8a949e]">
                       {formatConversationDate(item.created_at)} · {scopeLabel(item.scope)} · {modeLabel(item.mode)}
                     </span>
@@ -815,7 +1000,7 @@ function HomeHero({
         </header>
 
       <div className="relative mx-auto w-full max-w-5xl">
-        <div className={`absolute right-0 top-0 z-20 w-56 rounded-3xl border border-[#dbe2e8] bg-white p-2 shadow-[0_18px_48px_rgba(16,19,24,0.12)] transition-all ${entryMenuOpen ? "pointer-events-auto translate-y-0 opacity-100" : "pointer-events-none -translate-y-2 opacity-0"}`}>
+        <div className={`absolute right-0 top-0 z-[160] w-56 rounded-3xl border border-[#dbe2e8] bg-white p-2 shadow-[0_18px_48px_rgba(16,19,24,0.12)] transition-all ${entryMenuOpen ? "pointer-events-auto translate-y-0 opacity-100" : "pointer-events-none -translate-y-2 opacity-0"}`}>
           <EntryMenuPanel onGoResearch={onGoResearch} onGoWriting={onGoWriting} onGoProjects={onGoProjects} />
         </div>
       </div>
@@ -928,6 +1113,7 @@ function ResultWorkspace({
   error,
   sourceSummary,
   sourceStatuses,
+  searchSummary,
   workspaceView,
   messages,
   streamingContent,
@@ -969,6 +1155,7 @@ function ResultWorkspace({
   error: string | null;
   sourceSummary: string;
   sourceStatuses: Record<string, SourceStatusInfo>;
+  searchSummary: SearchSummary | null;
   workspaceView: "topic" | "chat";
   messages: ChatMessage[];
   streamingContent: string;
@@ -1007,7 +1194,7 @@ function ResultWorkspace({
 }) {
   return (
     <div className="flex h-screen flex-col overflow-hidden">
-      <header className="flex h-[88px] shrink-0 items-center justify-between border-b border-[#e1e3e6] bg-white/92 px-5 backdrop-blur md:px-8">
+      <header className="relative z-[130] flex h-[88px] shrink-0 items-center justify-between overflow-visible border-b border-[#e1e3e6] bg-white/92 px-5 backdrop-blur md:px-8">
         <div className="flex min-w-0 items-center gap-5">
           <button type="button" onClick={onToggleSidebar} className="rounded-lg p-2 text-[#1d232b] transition-colors hover:bg-[#f0f2f4]" title="展开或收起侧栏">
             <IconPanel />
@@ -1030,7 +1217,7 @@ function ResultWorkspace({
               <IconGrid />
               <span>其他入口</span>
             </button>
-            <div className={`absolute right-0 top-12 z-30 w-56 rounded-3xl border border-[#dbe2e8] bg-white p-2 shadow-[0_18px_48px_rgba(16,19,24,0.12)] transition-all ${entryMenuOpen ? "pointer-events-auto translate-y-0 opacity-100" : "pointer-events-none -translate-y-2 opacity-0"}`}>
+            <div className={`absolute right-0 top-[54px] z-[160] w-56 rounded-3xl border border-[#dbe2e8] bg-white p-2 shadow-[0_24px_60px_rgba(16,19,24,0.18)] transition-all ${entryMenuOpen ? "pointer-events-auto translate-y-0 opacity-100" : "pointer-events-none -translate-y-2 opacity-0"}`}>
               <EntryMenuPanel onGoResearch={onGoResearch} onGoWriting={onGoWriting} onGoProjects={onGoProjects} />
             </div>
           </div>
@@ -1063,9 +1250,10 @@ function ResultWorkspace({
             papers={papers}
             searchLoading={loading}
             searchError={error}
-            sourceSummary={sourceSummary}
-            sourceStatuses={sourceStatuses}
-            referencesOpen={referencesOpen}
+              sourceSummary={sourceSummary}
+              sourceStatuses={sourceStatuses}
+              searchSummary={searchSummary}
+              referencesOpen={referencesOpen}
             onOpenReferences={onOpenReferences}
             savingDirectionTitle={savingDirectionTitle}
             savedDirectionTitles={savedDirectionTitles}
@@ -1114,6 +1302,8 @@ function ResearchAnswer({
   loading,
   error,
   sourceSummary,
+  sourceStatuses,
+  searchSummary,
   referencesOpen,
   onOpenReferences,
 }: {
@@ -1122,6 +1312,8 @@ function ResearchAnswer({
   loading: boolean;
   error: string | null;
   sourceSummary: string;
+  sourceStatuses: Record<string, SourceStatusInfo>;
+  searchSummary: SearchSummary | null;
   referencesOpen: boolean;
   onOpenReferences: () => void;
 }) {
@@ -1207,6 +1399,24 @@ function ResearchAnswer({
           <p className="text-[17px] leading-8 text-[#1d2630]">
             本次检索返回 {papers.length} 篇相关文献，来源概况为 {sourceSummary}。以下内容只基于已返回文献的题名、摘要、年份和来源信息整理，不额外编造统计结论。
           </p>
+          {sourceStatuses && Object.keys(sourceStatuses).length > 0 ? (
+            <p className="mt-3 text-sm leading-7 text-[#5d6671]">
+              来源诊断：{Object.entries(sourceStatuses)
+                .map(([source, info]) => `${sourceLabel(source)} ${sourceStatusText(info)}`)
+                .join("；")}
+            </p>
+          ) : null}
+          {searchSummary?.authority_summary ? (
+            <div className="mt-6 rounded-[22px] border border-[#dbe7d9] bg-[#f5faf4] p-5">
+              <p className="text-xs font-black uppercase tracking-[0.16em] text-[#587055]">Authority Filter</p>
+              <p className="mt-2 text-[15px] leading-7 text-[#1f3420]">{searchSummary.authority_summary.overview}</p>
+              {searchSummary.authority_summary.has_pending ? (
+                <p className="mt-2 text-sm leading-6 text-[#5f6e5e]">
+                  `EI`、`JCR`、`中科院分区` 当前仅展示待核验提示，未被系统当作已认证证据。
+                </p>
+              ) : null}
+            </div>
+          ) : null}
 
           <h2 className="mt-8 text-2xl font-black tracking-[-0.03em] text-[#101318]">直接相关的研究证据</h2>
           <ul className="mt-4 space-y-4 pl-5 text-[16px] leading-8 text-[#1d2630]">
@@ -1357,8 +1567,8 @@ function ReferencesPanel({
                 paper={paper}
                 index={index}
                 expanded={expandedIndex === index}
-                saving={savingPaperTitle === paper.title}
-                saved={savedPaperTitles.includes(paper.title)}
+                saving={savingPaperTitle === getPaperKey(paper)}
+                saved={savedPaperTitles.includes(getPaperKey(paper))}
                 userLoggedIn={userLoggedIn}
                 hasProject={projects.length > 0}
                 onSave={() => onSavePaper(paper)}
@@ -1434,6 +1644,7 @@ function ReferenceCard({
             <span>{formatAuthors(paper.authors)}</span>
           </div>
           <p className="mt-1 text-sm italic text-[#7b8390]">{paper.venue || sourceLabel(paper.source)}</p>
+          <AuthorityBadges paper={paper} />
         </div>
       </button>
 
@@ -1451,6 +1662,16 @@ function ReferenceCard({
             <span className="font-bold text-[#20242a]">语言：</span>
             {paper.language === "cn" ? "中文" : paper.language === "en" ? "英文" : "未知"}
           </p>
+          {paper.authority_reasons?.length ? (
+            <div className="mt-2">
+              <span className="font-bold text-[#20242a]">权威筛选依据：</span>
+              <ul className="mt-1 space-y-1">
+                {paper.authority_reasons.map((reason, reasonIndex) => (
+                  <li key={`${reason}-${reasonIndex}`}>{reason}</li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
           {paper.url ? (
             <a
               href={paper.url}
@@ -1472,6 +1693,27 @@ function ReferenceCard({
         </div>
       ) : null}
     </article>
+  );
+}
+
+function AuthorityBadges({ paper }: { paper: Paper }) {
+  const verified = paper.authority_tags || [];
+  const pending = paper.pending_authority_tags || [];
+  if (!verified.length && !pending.length) return null;
+
+  return (
+    <div className="mt-3 flex flex-wrap gap-2">
+      {verified.map((tag) => (
+        <span key={`verified-${tag}`} className="rounded-full border border-[#bfe5d1] bg-[#eefaf3] px-2.5 py-1 text-[11px] font-black text-[#16613a]">
+          已核验 · {authorityLabel(tag)}
+        </span>
+      ))}
+      {pending.map((tag) => (
+        <span key={`pending-${tag}`} className="rounded-full border border-[#f1d49b] bg-[#fff7e8] px-2.5 py-1 text-[11px] font-black text-[#8a5a00]">
+          待核验 · {authorityLabel(tag)}
+        </span>
+      ))}
+    </div>
   );
 }
 
@@ -1647,7 +1889,7 @@ function SearchComposer({
                         active ? "border-[#1592e6] bg-[#edf7ff] text-[#126fb0]" : "border-[#d6dde4] bg-white text-[#4d5662]"
                       }`}
                     >
-                      {option.label}{option.inferred ? " · 推断" : ""}
+                      {option.label} · {option.verification}
                     </button>
                   );
                 })}
@@ -1725,6 +1967,10 @@ function sourceLabel(source: string) {
   return SOURCE_LABEL[source] ?? source;
 }
 
+function authorityLabel(tag: string) {
+  return AUTHORITY_LABEL[tag] ?? tag;
+}
+
 function sourceStatusText(info: SourceStatusInfo) {
   if (info.status === "ok") return `已返回 ${info.count} 条`;
   if (info.status === "rate_limited") return "当前限流";
@@ -1761,6 +2007,26 @@ function scopeLabel(scope: LibraryScope) {
   if (scope === "cn") return "中文";
   if (scope === "en") return "英文";
   return "全部";
+}
+
+function getPaperKey(paper: Paper) {
+  return paper.doi || `${paper.source}::${paper.title}`;
+}
+
+function normalizeFilters(filters?: LiteratureQualityFilters): LiteratureQualityFilters {
+  return {
+    sources: [...(filters?.sources || [])],
+    open_access_only: filters?.open_access_only ?? false,
+    quality_tags: [...(filters?.quality_tags || [])],
+    min_citation_count: filters?.min_citation_count ?? 0,
+  };
+}
+
+function normalizeSearchHistoryItem(item: SearchHistoryItem): SearchHistoryItem {
+  return {
+    ...item,
+    filters: normalizeFilters(item.filters),
+  };
 }
 
 function modeLabel(mode: ResearchMode) {
@@ -1853,6 +2119,19 @@ function IconGrid() {
       <rect x="14" y="4" width="6" height="6" rx="1.5" />
       <rect x="4" y="14" width="6" height="6" rx="1.5" />
       <rect x="14" y="14" width="6" height="6" rx="1.5" />
+    </svg>
+  );
+}
+
+function IconTimeline() {
+  return (
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.1" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M4 6h7" />
+      <path d="M4 12h11" />
+      <path d="M4 18h15" />
+      <circle cx="17" cy="6" r="2" />
+      <circle cx="19" cy="12" r="2" />
+      <circle cx="12" cy="18" r="2" />
     </svg>
   );
 }

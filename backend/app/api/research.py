@@ -3,9 +3,14 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
+from sqlalchemy import inspect
 
 from ..agents.research_direction_agent import research_direction_agent
 from ..agents.project_design_agent import project_design_agent
+from ..agents.workflows import (
+    run_generate_project_design_workflow,
+    run_generate_research_directions_workflow,
+)
 from ..core.database import SessionLocal, get_db
 from ..models.research_direction import ResearchDirection
 from ..models.project_design import ProjectDesign
@@ -31,21 +36,33 @@ def generate_directions(
     根据文献分析结果生成 3-5 个可研究方向，并进行多维度评分。
     结果自动持久化到数据库。
     """
-    directions = research_direction_agent.generate_directions(
-        literature_analysis=payload.literature_analysis,
-        requirement=payload.requirement or "",
-    )
-    scores = research_direction_agent.score_directions(directions)
+    project_id = get_owned_project(payload.project_id, current_user, db).id if payload.project_id else None
+    try:
+        return run_generate_research_directions_workflow(
+            db=db,
+            literature_analysis=payload.literature_analysis,
+            requirement=payload.requirement or "",
+            project_id=str(project_id) if project_id else None,
+            user_id=str(current_user.id),
+            direction_agent=research_direction_agent,
+            record_db=db,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=500, detail=f"研究方向生成失败：{exc}")
 
     # 持久化到数据库
     project_id = get_owned_project(payload.project_id, current_user, db).id if payload.project_id else None
-    saved_ids = _save_directions_to_db(directions, scores, project_id)
+
+    saved_ids = []
+    for direction, score in zip(result["directions"], result["scores"]):
+        saved_id = _save_single_direction_to_db(direction, score, project_id)
+        saved_ids.append(saved_id)
 
     return {
         "requirement": payload.requirement,
-        "directions_count": len(directions),
-        "directions": directions,
-        "scores": scores,
+        "directions_count": len(result["directions"]),
+        "directions": result["directions"],
+        "scores": result["scores"],
         "saved_ids": saved_ids,
     }
 
@@ -76,20 +93,21 @@ def generate_design(
     根据选定的研究方向生成完整项目设计方案（18 项内容）。
     结果自动持久化到数据库。
     """
-    design = project_design_agent.generate_design(
-        direction=payload.direction,
-        literature_analysis=payload.literature_analysis or {},
-        requirement=payload.requirement or "",
-    )
-    # 持久化到数据库
     project_id = get_owned_project(payload.project_id, current_user, db).id if payload.project_id else None
-    saved_id = _save_design_to_db(design, project_id, payload.direction_id)
-
-    return {
-        "requirement": payload.requirement,
-        "design": design,
-        "saved_id": saved_id,
-    }
+    try:
+        return run_generate_project_design_workflow(
+            db=db,
+            direction=payload.direction,
+            literature_analysis=payload.literature_analysis or {},
+            requirement=payload.requirement or "",
+            project_id=str(project_id) if project_id else None,
+            direction_id=str(payload.direction_id) if payload.direction_id else None,
+            user_id=str(current_user.id),
+            project_design_agent=project_design_agent,
+            record_db=db,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=500, detail=f"项目设计生成失败：{exc}")
 
 
 @router.get("/directions")
@@ -170,7 +188,7 @@ def _save_directions_to_db(
         for d in directions:
             title = d.get("title", "")
             sc = score_map.get(title, {})
-            direction = ResearchDirection(
+            payload = dict(
                 project_id=project_id,
                 title=title,
                 background=d.get("background"),
@@ -180,8 +198,10 @@ def _save_directions_to_db(
                 innovation=_to_json_str(d.get("innovation", [])),
                 feasibility_score=_to_float(sc.get("feasibility")),
                 recommendation_score=_to_float(sc.get("overall")),
-                content={**d, "scores": sc},
             )
+            if _table_has_column(db, "research_directions", "content"):
+                payload["content"] = {**d, "scores": sc}
+            direction = ResearchDirection(**payload)
             db.add(direction)
             db.flush()
             saved_ids.append(str(direction.id))
@@ -205,7 +225,7 @@ def _save_single_direction_to_db(
     try:
         db = SessionLocal()
         sc = (score or {}).get("scores", {})
-        saved = ResearchDirection(
+        payload = dict(
             project_id=project_id,
             title=direction.get("title", ""),
             background=direction.get("background"),
@@ -215,8 +235,10 @@ def _save_single_direction_to_db(
             innovation=_to_json_str(direction.get("innovation", [])),
             feasibility_score=_to_float(sc.get("feasibility")),
             recommendation_score=_to_float(sc.get("overall")),
-            content={**direction, "scores": sc},
         )
+        if _table_has_column(db, "research_directions", "content"):
+            payload["content"] = {**direction, "scores": sc}
+        saved = ResearchDirection(**payload)
         db.add(saved)
         db.flush()
         saved_id = str(saved.id)
@@ -229,6 +251,24 @@ def _save_single_direction_to_db(
     finally:
         if db:
             db.close()
+
+_TABLE_COLUMN_RUNTIME_CACHE: dict[tuple[str, str], tuple[str, ...]] = {}
+
+def _table_has_column(db: Session, table_name: str, column_name: str) -> bool:
+    try:
+        bind = db.get_bind()
+        bind_url = str(getattr(bind, "url", ""))
+        cache_key = (bind_url, table_name)
+        cached = _TABLE_COLUMN_RUNTIME_CACHE.get(cache_key)
+        if cached is not None:
+            return column_name in cached
+        inspector = inspect(bind)
+        columns = tuple(column["name"] for column in inspector.get_columns(table_name))
+        _TABLE_COLUMN_RUNTIME_CACHE[cache_key] = columns
+        return column_name in columns
+    except Exception:
+        # 无法探测时保守放行，避免影响已正常运行的新库结构。
+        return True
 
 
 def _save_design_to_db(

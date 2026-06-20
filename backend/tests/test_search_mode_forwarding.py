@@ -32,7 +32,7 @@ class SearchModeForwardingTests(unittest.TestCase):
                 "papers": [],
             }
 
-        with patch.object(literature.literature_search_agent, "search_by_requirement", side_effect=fake_search):
+        with patch.object(literature, "run_literature_search_workflow", side_effect=fake_search):
             with patch.object(literature, "_save_papers_to_db", return_value=0), \
                  patch.object(literature, "create_literature_search_task", return_value=None):
                 result = literature.search_literature(payload)
@@ -72,7 +72,7 @@ class SearchModeForwardingTests(unittest.TestCase):
                 "papers": [],
             }
 
-        with patch.object(literature.literature_search_agent, "search_by_requirement", side_effect=fake_search):
+        with patch.object(literature, "run_literature_search_workflow", side_effect=fake_search):
             with patch.object(literature, "_save_papers_to_db", return_value=0), \
                  patch.object(literature, "create_literature_search_task", return_value=None):
                 result = literature.search_literature(payload)

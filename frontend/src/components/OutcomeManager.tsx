@@ -29,6 +29,7 @@ export default function OutcomeManager({ projectId, onReadyChange }: Props) {
   const [summary, setSummary] = useState<OutcomeSummary | null>(null);
   const [readiness, setReadiness] = useState<ReadinessCheck | null>(null);
   const [checkingReadiness, setCheckingReadiness] = useState(false);
+  const [indexingIds, setIndexingIds] = useState<Set<string>>(new Set());
   const [error, setError] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
@@ -59,7 +60,7 @@ export default function OutcomeManager({ projectId, onReadyChange }: Props) {
   useEffect(() => {
     loadOutcomes();
     loadTypes();
-  }, [loadOutcomes, loadTypes]);
+  }, [projectId]); // 只依赖 projectId，避免函数引用导致的无限循环
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const f = e.target.files?.[0] || null;
@@ -109,6 +110,23 @@ export default function OutcomeManager({ projectId, onReadyChange }: Props) {
     }
   };
 
+  const handleIndexKnowledge = async (outcome: Outcome) => {
+    setIndexingIds((prev) => new Set(prev).add(outcome.id));
+    setError(null);
+    try {
+      await api.indexOutcomeKnowledge(outcome.id);
+      await loadOutcomes();
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : "解析入知识库失败");
+    } finally {
+      setIndexingIds((prev) => {
+        const next = new Set(prev);
+        next.delete(outcome.id);
+        return next;
+      });
+    }
+  };
+
   const handleSummarize = async () => {
     setError(null);
     try {
@@ -148,6 +166,9 @@ export default function OutcomeManager({ projectId, onReadyChange }: Props) {
       {/* 上传区 */}
       <div className="bg-white border border-gray-200 rounded-xl p-5">
         <h3 className="font-semibold text-gray-800 mb-4">上传项目成果</h3>
+        <p className="mb-4 text-xs text-gray-500">
+          支持将 TXT / MD / DOCX / 文本型 PDF 解析入项目知识库；扫描版 PDF 暂不支持 OCR。
+        </p>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div>
             <label className="block text-sm text-gray-600 mb-1">文件</label>
@@ -271,13 +292,26 @@ export default function OutcomeManager({ projectId, onReadyChange }: Props) {
                     <span className="text-xs px-2 py-0.5 rounded-full bg-gray-100 text-gray-600">
                       {OUTCOME_TYPE_LABELS[o.outcome_type] || o.outcome_type}
                     </span>
+                    <KnowledgeStatusBadge outcome={o} indexing={indexingIds.has(o.id)} />
                   </div>
                   <p className="font-medium text-gray-800 text-sm truncate">{o.name}</p>
                   {o.description && (
                     <p className="text-xs text-gray-500 mt-1 truncate">{o.description}</p>
                   )}
+                  {o.extra_data?.knowledge_error && (
+                    <p className="mt-2 text-xs text-red-500 line-clamp-2">{o.extra_data.knowledge_error}</p>
+                  )}
                 </div>
                 <div className="flex gap-2 ml-3 shrink-0">
+                  {isKnowledgeParsable(o) && (
+                    <button
+                      onClick={() => handleIndexKnowledge(o)}
+                      disabled={indexingIds.has(o.id)}
+                      className="text-xs text-emerald-600 hover:underline disabled:opacity-50"
+                    >
+                      {knowledgeActionLabel(o, indexingIds.has(o.id))}
+                    </button>
+                  )}
                   {o.file_url && (
                     <button
                       onClick={() => handleDownload(o)}
@@ -299,5 +333,40 @@ export default function OutcomeManager({ projectId, onReadyChange }: Props) {
         )}
       </div>
     </div>
+  );
+}
+
+function isKnowledgeParsable(outcome: Outcome) {
+  const path = `${outcome.file_path || outcome.name || ""}`.toLowerCase();
+  return [".txt", ".md", ".docx", ".pdf"].some((ext) => path.endsWith(ext));
+}
+
+function knowledgeActionLabel(outcome: Outcome, indexing: boolean) {
+  if (indexing) return "解析中...";
+  const status = outcome.extra_data?.knowledge_status;
+  if (status === "indexed") return "重新解析";
+  if (status === "failed") return "重试解析";
+  return "解析入库";
+}
+
+function KnowledgeStatusBadge({ outcome, indexing }: { outcome: Outcome; indexing: boolean }) {
+  const status = indexing ? "parsing" : outcome.extra_data?.knowledge_status || "pending";
+  const count = outcome.extra_data?.knowledge_chunk_count || 0;
+  const styles: Record<string, string> = {
+    indexed: "bg-emerald-50 text-emerald-700 border-emerald-200",
+    parsing: "bg-amber-50 text-amber-700 border-amber-200",
+    failed: "bg-red-50 text-red-700 border-red-200",
+    pending: "bg-slate-50 text-slate-500 border-slate-200",
+  };
+  const labels: Record<string, string> = {
+    indexed: `已入库${count ? ` ${count} 段` : ""}`,
+    parsing: "解析中",
+    failed: "解析失败",
+    pending: "未解析",
+  };
+  return (
+    <span className={`text-xs px-2 py-0.5 rounded-full border ${styles[status] || styles.pending}`}>
+      {labels[status] || labels.pending}
+    </span>
   );
 }

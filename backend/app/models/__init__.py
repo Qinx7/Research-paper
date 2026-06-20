@@ -12,5 +12,7 @@ from .user import User
 from .paper_note import PaperNote
 from .literature_search_task import LiteratureSearchTask
 from .generated_artifact import GeneratedArtifact
+from .project_document_chunk import ProjectDocumentChunk
+from .agent_workflow import AgentWorkflowRun, AgentWorkflowStep
 
-__all__ = ["Project", "Paper", "ResearchDirection", "ProjectDesign", "Conversation", "Message", "Proposal", "Outcome", "Draft", "ZoteroSync", "User", "PaperNote", "LiteratureSearchTask", "GeneratedArtifact"]
+__all__ = ["Project", "Paper", "ResearchDirection", "ProjectDesign", "Conversation", "Message", "Proposal", "Outcome", "Draft", "ZoteroSync", "User", "PaperNote", "LiteratureSearchTask", "GeneratedArtifact", "ProjectDocumentChunk", "AgentWorkflowRun", "AgentWorkflowStep"]

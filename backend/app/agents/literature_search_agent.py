@@ -18,6 +18,11 @@ from ..services.cqvip_search import CQVIPClient
 from ..services.crossref_search import CrossrefClient
 from ..services.arxiv_search import ArxivClient
 from ..services.pubmed_search import PubMedClient
+from ..services.pubscholar_search import PubScholarClient
+from ..services.authority_filter_service import (
+    authority_display_flags,
+    evaluate_paper_authority,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -28,6 +33,7 @@ SOURCE_QUALITY_PRIOR = {
     "semantic_scholar": 0.88,
     "openalex": 0.84,
     "cnki": 0.82,
+    "pubscholar": 0.81,
     "crossref": 0.80,
     "arxiv": 0.78,
     "cqvip": 0.74,
@@ -62,6 +68,7 @@ class LiteratureSearchAgent:
         self.openalex = OpenAlexClient()
         self.semantic = SemanticScholarClient(api_key=settings.SEMANTIC_SCHOLAR_API_KEY)
         self.pubmed = PubMedClient()
+        self.pubscholar = PubScholarClient()
         self.cnki = CNKIClient(
             headless=settings.CNKI_HEADLESS,
             timeout=settings.CNKI_TIMEOUT,
@@ -186,6 +193,9 @@ class LiteratureSearchAgent:
         if "semantic_scholar" in selected_sources and query_en:
             per_source_results["semantic_scholar"] = self.semantic.search(query_en, year_from, year_to, source_limit)
             logger.info("文献源返回: source=semantic_scholar count=%s query=%s", len(per_source_results["semantic_scholar"]), query_en)
+        if "pubscholar" in selected_sources and keywords_cn:
+            per_source_results["pubscholar"] = self.pubscholar.search(query_cn, year_from, year_to, source_limit)
+            logger.info("文献源返回: source=pubscholar count=%s query=%s", len(per_source_results["pubscholar"]), query_cn)
         if "cnki" in selected_sources and settings.CNKI_ENABLED and keywords_cn:
             per_source_results["cnki"] = self._search_cn_source_with_fallbacks(
                 self.cnki,
@@ -258,16 +268,16 @@ class LiteratureSearchAgent:
         }
 
     def _resolve_sources(self, library_scope: str, sources: list[str] | None) -> list[str]:
-        all_valid = {"pubmed", "openalex", "semantic_scholar", "cnki", "cqvip", "crossref", "arxiv"}
+        all_valid = {"pubmed", "openalex", "semantic_scholar", "pubscholar", "cnki", "cqvip", "crossref", "arxiv"}
         if sources:
             valid = [s for s in sources if s in all_valid]
             if valid:
                 return valid
         if library_scope == "cn":
-            return ["cnki", "cqvip"]
+            return ["pubscholar", "cnki", "cqvip"]
         if library_scope == "en":
             return ["pubmed", "openalex", "semantic_scholar", "crossref", "arxiv"]
-        return ["pubmed", "openalex", "semantic_scholar", "crossref", "arxiv", "cnki", "cqvip"]
+        return ["pubmed", "openalex", "semantic_scholar", "crossref", "arxiv", "pubscholar", "cnki", "cqvip"]
 
     def _resolve_source_limit(self, *, limit: int, mode: str) -> int:
         if mode == "deep_research":
@@ -311,11 +321,27 @@ class LiteratureSearchAgent:
         return " ".join(ordered[:4])
 
     def _build_cn_query_fallbacks(self, query_cn: str) -> list[str]:
+        """构建中文查询的回退策略。
+
+        策略：
+        1. 完整查询（多个关键词）
+        2. 前两个关键词组合
+        3. 最核心的单个关键词
+        4. 如果有多个词，尝试用引号精确匹配首词
+        """
         tokens = [token for token in query_cn.split() if token]
         fallbacks = [query_cn]
-        if len(tokens) >= 2:
+
+        if len(tokens) >= 3:
+            # 对于3个及以上关键词，先尝试前两个的组合
             fallbacks.append(" ".join(tokens[:2]))
+
+        if len(tokens) >= 2:
+            # 尝试用引号包裹首个关键词（精确匹配）
+            fallbacks.append(f'"{tokens[0]}"')
+
         if tokens:
+            # 最后回退到首个关键词
             fallbacks.append(tokens[0])
 
         ordered: list[str] = []
@@ -410,8 +436,12 @@ class LiteratureSearchAgent:
                     + quality_score * 0.20
                 )
 
+            authority = evaluate_paper_authority(paper)
             quality_flags = self._build_quality_flags(paper, language)
-            quality_inference = self._build_quality_inference(paper)
+            authority_flags = authority_display_flags(authority)
+            if authority_flags:
+                quality_flags = list(dict.fromkeys(quality_flags + authority_flags))
+            quality_inference = list(authority.tags)
             if quality_tags:
                 normalized_tags = {tag.strip().lower() for tag in quality_tags if tag and tag.strip()}
                 if normalized_tags and not normalized_tags.issubset(set(quality_inference)):
@@ -434,6 +464,11 @@ class LiteratureSearchAgent:
                 "final_score": round(final_score, 4),
                 "quality_flags": quality_flags,
                 "quality_inference": quality_inference,
+                "authority_tags": authority.tags,
+                "pending_authority_tags": authority.pending_tags,
+                "authority_reasons": authority.reasons,
+                "authority_level": authority.authority_level,
+                "verified_level": authority.verified_level,
                 "why_selected": why_selected,
             })
 
@@ -496,7 +531,7 @@ class LiteratureSearchAgent:
         # 3. 再补英文与总体高分结果
         add_items(cn_results, max_count=3)
         available_sources = []
-        for source in ("cnki", "cqvip", "semantic_scholar", "openalex", "crossref", "arxiv"):
+        for source in ("pubscholar", "cnki", "cqvip", "semantic_scholar", "openalex", "crossref", "arxiv"):
             if source == "pubmed":
                 continue
             if any(item.get("paper") and item["paper"].source == source for item in ranked):
@@ -620,6 +655,7 @@ class LiteratureSearchAgent:
             "openalex": self.openalex,
             "semantic_scholar": self.semantic,
             "pubmed": self.pubmed,
+            "pubscholar": self.pubscholar,
             "cnki": self.cnki,
             "cqvip": self.cqvip,
             "crossref": self.crossref,
@@ -705,6 +741,8 @@ class LiteratureSearchAgent:
             flags.append("中高影响")
         if paper.source == "cnki":
             flags.append("知网")
+        elif paper.source == "pubscholar":
+            flags.append("PubScholar")
         elif paper.source == "cqvip":
             flags.append("维普")
         elif paper.source == "pubmed":
@@ -724,26 +762,7 @@ class LiteratureSearchAgent:
         return flags
 
     def _build_quality_inference(self, paper: PaperResult) -> list[str]:
-        text = " ".join(filter(None, [paper.venue or "", paper.title or "", paper.url or ""])).lower()
-        tags: list[str] = []
-        if "ieee" in text:
-            tags.append("ieee")
-        if "acm" in text or "association for computing machinery" in text:
-            tags.append("acm")
-        if paper.source == "pubmed":
-            tags.append("pubmed")
-        if paper.is_open_access:
-            tags.append("open_access")
-        # 第一版只做保守推断：明确命中关键词时才打标签
-        if "ei" in text and "ieee" not in text:
-            tags.append("ei")
-        if "jcr" in text:
-            tags.append("jcr")
-        if "中科院" in text:
-            tags.append("cas")
-        if "北大核心" in text or "中文核心" in text:
-            tags.append("pku_core")
-        return list(dict.fromkeys(tags))
+        return list(evaluate_paper_authority(paper).tags)
 
     def _build_selection_reason(
         self,
@@ -763,7 +782,7 @@ class LiteratureSearchAgent:
             reasons.append("引用影响力较高")
         if freshness_score >= 0.7:
             reasons.append("发表时间较新")
-        if "知网" in quality_flags or "Semantic Scholar" in quality_flags or "Crossref" in quality_flags:
+        if "知网" in quality_flags or "PubScholar" in quality_flags or "Semantic Scholar" in quality_flags or "Crossref" in quality_flags:
             reasons.append("来源可靠")
         return "；".join(reasons[:3]) or "作为补充证据纳入结果集"
 
@@ -788,6 +807,11 @@ class LiteratureSearchAgent:
             "final_score": paper_info["final_score"],
             "quality_flags": paper_info["quality_flags"],
             "quality_inference": paper_info.get("quality_inference", []),
+            "authority_tags": paper_info.get("authority_tags", []),
+            "pending_authority_tags": paper_info.get("pending_authority_tags", []),
+            "authority_reasons": paper_info.get("authority_reasons", []),
+            "authority_level": paper_info.get("authority_level", "none"),
+            "verified_level": paper_info.get("verified_level", "unverified"),
             "why_selected": paper_info["why_selected"],
         }
 
