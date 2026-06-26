@@ -12,6 +12,15 @@ from sqlalchemy.orm import Session
 
 def load_project_workspace_snapshot(db: Session, project_id: UUID | str) -> dict[str, Any]:
     """从数据库加载项目相关对象，并构建工作台快照。"""
+    return load_project_workspace_snapshot_for_draft(db, project_id, active_draft_id=None)
+
+
+def load_project_workspace_snapshot_for_draft(
+    db: Session,
+    project_id: UUID | str,
+    active_draft_id: UUID | str | None,
+) -> dict[str, Any]:
+    """从数据库加载项目相关对象，并按指定草稿构建工作台快照。"""
     from ..models.draft import Draft
     from ..models.outcome import Outcome
     from ..models.paper import Paper
@@ -63,6 +72,7 @@ def load_project_workspace_snapshot(db: Session, project_id: UUID | str) -> dict
         paper_notes=paper_notes,
         chunks=chunks,
         proposals=proposals,
+        active_draft_id=str(active_draft_id) if active_draft_id else None,
     )
 
 
@@ -75,6 +85,7 @@ def build_project_workspace_snapshot(
     paper_notes: Iterable[Any],
     chunks: Iterable[Any],
     proposals: Iterable[Any],
+    active_draft_id: str | None = None,
 ) -> dict[str, Any]:
     """构建项目知识与交付工作台快照。"""
     project_id_str = str(project_id)
@@ -85,7 +96,7 @@ def build_project_workspace_snapshot(
     chunk_list = list(chunks)
     proposal_list = list(proposals)
 
-    latest_draft = _latest_by(draft_list, "updated_at")
+    latest_draft = _resolve_active_draft(draft_list, active_draft_id)
     latest_proposal = _latest_by(proposal_list, "created_at")
     chapters = _build_chapter_summaries(
         project_id=project_id_str,
@@ -196,17 +207,21 @@ def _build_delivery_summary(
     chapters: list[dict[str, Any]],
 ) -> dict[str, Any]:
     latest_draft_summary = None
+    has_real_data = False
+    defense_ready = False
     defense_summary = {
-        "ready": False,
-        "has_real_data": False,
+        "ready": defense_ready,
+        "has_real_data": has_real_data,
         "draft_id": None,
         "action_url": f"/projects/{project_id}?view=paper",
-        "action_label": "进入论文工作流生成答辩材料",
+        "action_label": "进入论文工作台",
     }
     if latest_draft:
         completed_count = sum(1 for chapter in chapters if chapter["status"] != "draft")
         chapter_total = max(len(chapters), 1)
         completion_rate = round((completed_count / chapter_total) * 100)
+        has_real_data = any(chapter["data_based"] for chapter in chapters)
+        defense_ready = has_real_data
         latest_draft_summary = {
             "id": str(getattr(latest_draft, "id")),
             "title": getattr(latest_draft, "title", "论文草稿"),
@@ -220,11 +235,11 @@ def _build_delivery_summary(
             "action_label": "继续论文写作",
         }
         defense_summary = {
-            "ready": completed_count > 0,
-            "has_real_data": any(chapter["data_based"] for chapter in chapters),
+            "ready": defense_ready,
+            "has_real_data": has_real_data,
             "draft_id": str(getattr(latest_draft, "id")),
             "action_url": f"/projects/{project_id}?view=paper",
-            "action_label": "生成答辩材料",
+            "action_label": "进入论文工作台",
         }
 
     latest_proposal_summary = None
@@ -348,6 +363,9 @@ def _match_chunks(
             "title": getattr(chunk, "title", "资料片段"),
             "source_filename": getattr(chunk, "source_filename", None),
             "source_type": getattr(chunk, "source_type", None),
+            "section_title": getattr(chunk, "meta", {}).get("section_title") if getattr(chunk, "meta", None) else None,
+            "section_level": getattr(chunk, "meta", {}).get("section_level") if getattr(chunk, "meta", None) else None,
+            "section_path": getattr(chunk, "meta", {}).get("section_path") if getattr(chunk, "meta", None) else [],
             "download_url": f"/api/outcomes/{getattr(chunk, 'outcome_id')}/download",
             "action_url": f"/projects/{project_id}?view=overview",
             "action_label": "查看知识工作台",
@@ -412,3 +430,11 @@ def _latest_by(items: list[Any], field: str) -> Any | None:
         return datetime.min
 
     return sorted(items, key=sort_key, reverse=True)[0]
+
+
+def _resolve_active_draft(drafts: list[Any], active_draft_id: str | None) -> Any | None:
+    if active_draft_id:
+        matched = next((draft for draft in drafts if str(getattr(draft, "id", "")) == str(active_draft_id)), None)
+        if matched is not None:
+            return matched
+    return _latest_by(drafts, "updated_at")

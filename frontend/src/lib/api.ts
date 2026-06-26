@@ -42,6 +42,7 @@ function apiUrl(url: string): string {
 
 import type {
   Project,
+  ProjectDocumentSearchResult,
   ProjectWorkspaceSnapshot,
   AnalyzeRequirementResponse,
   SearchLiteratureResponse,
@@ -51,6 +52,7 @@ import type {
   GenerateDesignResponse,
   GeneratePPTResponse,
   ListPPTsResponse,
+  HtmlDeckArtifact,
   PPTStyle,
   ProposalOut,
   LiteratureAnalysisInput,
@@ -154,6 +156,19 @@ export async function downloadWithAuth(url: string, filename?: string): Promise<
   window.URL.revokeObjectURL(objectUrl);
 }
 
+export async function openHtmlPreviewWithAuth(url: string): Promise<void> {
+  const res = await fetch(apiUrl(url), { headers: authOnlyHeaders() });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || `预览失败 (${res.status})`);
+  }
+
+  const blob = await res.blob();
+  const objectUrl = window.URL.createObjectURL(blob);
+  window.open(objectUrl, "_blank", "noopener,noreferrer");
+  window.setTimeout(() => window.URL.revokeObjectURL(objectUrl), 60_000);
+}
+
 /** 获取所有项目（仅当前用户） */
 export async function listProjects(): Promise<Project[]> {
   return authGet<Project[]>(`${API_BASE_URL}/api/projects/`);
@@ -165,8 +180,19 @@ export async function getProject(projectId: string): Promise<Project> {
 }
 
 /** 获取项目知识与交付工作台快照 */
-export async function getProjectWorkspace(projectId: string): Promise<ProjectWorkspaceSnapshot> {
-  return authGet<ProjectWorkspaceSnapshot>(`${API_BASE_URL}/api/projects/${projectId}/workspace`);
+export async function getProjectWorkspace(projectId: string, draftId?: string | null): Promise<ProjectWorkspaceSnapshot> {
+  const searchParams = new URLSearchParams();
+  if (draftId) searchParams.set("draft_id", draftId);
+  const qs = searchParams.toString();
+  return authGet<ProjectWorkspaceSnapshot>(`${API_BASE_URL}/api/projects/${projectId}/workspace${qs ? `?${qs}` : ""}`);
+}
+
+/** 搜索项目内已解析入库的资料片段 */
+export async function searchProjectDocuments(projectId: string, query: string, limit = 20): Promise<ProjectDocumentSearchResult[]> {
+  const searchParams = new URLSearchParams();
+  searchParams.set("q", query);
+  searchParams.set("limit", String(limit));
+  return authGet<ProjectDocumentSearchResult[]>(`${API_BASE_URL}/api/projects/${projectId}/document-search?${searchParams.toString()}`);
 }
 
 /** 更新项目信息 */
@@ -465,7 +491,7 @@ export async function getLatestProjectProposal(projectId: string) {
 
 /** 获取可选 PPT 风格列表 */
 export async function listPPTStyles() {
-  const res = await fetch(`${BASE_URL}/api/ppt/styles`);
+  const res = await fetch(`${BASE_URL}/api/defense/ppt/styles`, { headers: authHeaders() });
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
     throw new Error(err.detail || `请求失败 (${res.status})`);
@@ -715,13 +741,24 @@ export async function getKnowledgeGraph(projectId: string) {
   return res.json();
 }
 
-// ========== 答辩 PPT ==========
+// ========== 已停用：答辩 PPT（后端能力保留，当前前端主链路不使用） ==========
 
 /** 获取答辩 PPT 风格列表 */
 export async function listDefensePPTStyles() {
-  const res = await fetch(`${BASE_URL}/api/defense/ppt/styles`);
+  const res = await fetch(`${BASE_URL}/api/defense/ppt/styles`, { headers: authHeaders() });
   if (!res.ok) throw new Error("获取风格失败");
   return res.json() as Promise<PPTStyle[]>;
+}
+
+/** 生成实验型 HTML deck */
+export function generateHtmlDeckArtifact(params: {
+  deck_title?: string;
+  slides_outline?: Record<string, unknown>[];
+  theme?: string;
+  draft_id?: string;
+  proposal_id?: string;
+}) {
+  return post<HtmlDeckArtifact>("/api/ppt/html-deck", params);
 }
 
 /** 生成答辩 PPT */

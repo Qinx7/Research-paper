@@ -116,6 +116,36 @@ class GroundingGuardTests(unittest.TestCase):
 
         self.assertEqual(validated["citations"], ["写作信心提升"])
 
+    def test_generated_chapter_allows_full_reference_string_when_title_matches(self):
+        result = {
+            "chapter_key": "chapter_1_introduction",
+            "title": "第一章 绪论",
+            "content": "正文",
+            "citations": [
+                "Sébastien Bubeck, Varun Chandrasekaran, Ronen Eldan. Sparks of Artificial General Intelligence: Early experiments with GPT-4. arXiv (Cornell University), 2023",
+            ],
+            "data_based": False,
+        }
+        papers = [
+            SimpleNamespace(
+                title="Sparks of Artificial General Intelligence: Early experiments with GPT-4",
+                abstract="",
+            )
+        ]
+
+        validated = validate_generated_chapter_grounding(
+            chapter_key="chapter_1_introduction",
+            result=result,
+            outcomes=[],
+            papers=papers,
+            evidence_items=[],
+        )
+
+        self.assertEqual(
+            validated["citations"],
+            ["Sparks of Artificial General Intelligence: Early experiments with GPT-4"],
+        )
+
     def test_generated_chapter_rejects_unsupported_specific_percentages(self):
         result = {
             "chapter_key": "chapter_5_experiment",
@@ -133,6 +163,44 @@ class GroundingGuardTests(unittest.TestCase):
                 papers=[],
                 evidence_items=[],
             )
+
+    def test_generated_chapter_does_not_treat_section_heading_as_person_count(self):
+        result = {
+            "chapter_key": "chapter_2_theory",
+            "title": "第二章 相关理论与技术基础",
+            "content": "2.1 人工智能基础\n本节介绍人工智能的定义、发展脉络与核心概念。",
+            "citations": [],
+            "data_based": False,
+        }
+
+        validated = validate_generated_chapter_grounding(
+            chapter_key="chapter_2_theory",
+            result=result,
+            outcomes=[],
+            papers=[],
+            evidence_items=[],
+        )
+
+        self.assertEqual(validated["content"], result["content"])
+
+    def test_non_intro_chapter_citations_are_cleared(self):
+        result = {
+            "chapter_key": "chapter_3_design",
+            "title": "第三章 系统需求分析与总体设计",
+            "content": "本章围绕系统需求与模块设计展开。",
+            "citations": ["真实论文A", "真实成果B"],
+            "data_based": False,
+        }
+
+        validated = validate_generated_chapter_grounding(
+            chapter_key="chapter_3_design",
+            result=result,
+            outcomes=[SimpleNamespace(name="真实成果B", outcome_type="prototype")],
+            papers=[SimpleNamespace(title="真实论文A", abstract="")],
+            evidence_items=[],
+        )
+
+        self.assertEqual(validated["citations"], [])
 
 
 if __name__ == "__main__":

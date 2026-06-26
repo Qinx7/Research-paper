@@ -113,10 +113,14 @@ class PaperWritingWorkflowTests(unittest.TestCase):
         self.assertEqual(draft.version, 2)
         self.assertIn("访谈材料", observed["outcomes_summary"])
         self.assertIn("已有文献", observed["literature_context"])
+        self.assertIn("允许填写到 citations 的文献标题清单", observed["literature_context"])
+        self.assertIn("真实论文A", observed["literature_context"])
         self.assertEqual(len(db.steps), 5)
         self.assertEqual(db.runs[0].status, "success")
         self.assertEqual(db.runs[0].output_snapshot["chapter_key"], "chapter_1_introduction")
         self.assertEqual(db.runs[0].output_snapshot["evidence_counts"]["papers"], 1)
+        self.assertEqual(db.steps[2].output_summary.get("skill_id"), "paper.chapter_draft")
+        self.assertEqual(db.steps[3].output_summary.get("skill_id"), "paper.chapter_grounding")
 
     def test_chapter_workflow_fails_before_save_when_grounding_rejects(self):
         from app.agents.workflows.paper_writing_workflow import run_generate_chapter_workflow
@@ -155,6 +159,44 @@ class PaperWritingWorkflowTests(unittest.TestCase):
         self.assertEqual(db.runs[0].status, "failed")
         failed_steps = [step for step in db.steps if step.status == "failed"]
         self.assertEqual(failed_steps[0].node_name, "grounding_guard")
+
+    def test_non_intro_chapter_citations_are_stripped_before_save(self):
+        from app.agents.workflows.paper_writing_workflow import run_generate_chapter_workflow
+
+        draft = SimpleNamespace(
+            id=uuid.uuid4(),
+            project_id=uuid.uuid4(),
+            outline={"chapters": [{"key": "chapter_3_design", "title": "第三章 系统需求分析与总体设计"}]},
+            content={},
+            version=1,
+        )
+        db = FakeDb(
+            draft,
+            outcomes=[SimpleNamespace(name="系统截图", description="界面说明", outcome_type="prototype")],
+            papers=[SimpleNamespace(title="真实论文A", abstract="文献摘要")],
+        )
+
+        class FakeWritingAgent:
+            def generate_chapter(self, **kwargs):
+                return {
+                    "chapter_key": "chapter_3_design",
+                    "title": "第三章 系统需求分析与总体设计",
+                    "content": "本章围绕系统架构与模块设计展开。",
+                    "citations": ["真实论文A", "系统截图"],
+                    "data_based": False,
+                }
+
+        result = run_generate_chapter_workflow(
+            db=db,
+            draft=draft,
+            chapter_key="chapter_3_design",
+            writing_agent=FakeWritingAgent(),
+            retrieve_evidence=lambda *_args, **_kwargs: [],
+            record_db=db,
+        )
+
+        self.assertEqual(result["citations"], [])
+        self.assertEqual(draft.content["chapter_3_design"]["citations"], [])
 
 
 if __name__ == "__main__":

@@ -6,7 +6,13 @@ import { useRouter } from "next/navigation";
 import { getProjectLiteratureMatrix, listProjectPapers, removeProjectPaper } from "@/lib/api";
 import type { LiteratureMatrixResult, SavedPaper } from "@/lib/types";
 
-export default function ProjectLiteratureLibrary({ projectId }: { projectId: string }) {
+export default function ProjectLiteratureLibrary({
+  projectId,
+  highlightedPaperId = null,
+}: {
+  projectId: string;
+  highlightedPaperId?: string | null;
+}) {
   const router = useRouter();
   const [papers, setPapers] = useState<SavedPaper[]>([]);
   const [loading, setLoading] = useState(true);
@@ -28,6 +34,15 @@ export default function ProjectLiteratureLibrary({ projectId }: { projectId: str
   useEffect(() => {
     loadPapers();
   }, [projectId]);
+
+  useEffect(() => {
+    if (!highlightedPaperId || !papers.length) return;
+    const timer = window.setTimeout(() => {
+      const node = document.getElementById(`project-paper-${highlightedPaperId}`);
+      node?.scrollIntoView({ behavior: "smooth", block: "center" });
+    }, 120);
+    return () => window.clearTimeout(timer);
+  }, [highlightedPaperId, papers]);
 
   const handleRemove = async (paperId: string) => {
     setRemovingId(paperId);
@@ -121,7 +136,12 @@ export default function ProjectLiteratureLibrary({ projectId }: { projectId: str
       ) : (
         <div className="space-y-4">
           {papers.map((paper) => (
-            <article key={paper.id} className="rounded-sm border border-[#e8e1d5] bg-white p-6 shadow-sm">
+            <article
+              key={paper.id}
+              id={`project-paper-${paper.id}`}
+              className="rounded-sm border border-[#e8e1d5] bg-white p-6 shadow-sm"
+              style={highlightedPaperId === paper.id ? { boxShadow: "0 0 0 2px rgba(184,134,11,0.24)", background: "#fffaf0" } : undefined}
+            >
               <div className="flex flex-wrap items-start justify-between gap-4">
                 <div className="min-w-0 flex-1">
                   <div className="mb-3 flex flex-wrap items-center gap-2">

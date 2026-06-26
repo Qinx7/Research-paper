@@ -7,21 +7,28 @@ import PaperWorkflow from "@/components/PaperWorkflow";
 import ProjectLiteratureLibrary from "@/components/ProjectLiteratureLibrary";
 import ProjectLiteratureMatrix from "@/components/ProjectLiteratureMatrix";
 import ZoteroSync from "@/components/ZoteroSync";
+import { groupDocumentSearchResults } from "@/lib/documentSearchGrouping.mjs";
+import { highlightDocumentSearchText } from "@/lib/documentSearchHighlight.mjs";
+import { buildDocumentUsageLinks } from "@/lib/documentSearchUsage.mjs";
 import {
   deleteProject,
-  getDefenseOutline,
+  generateHtmlDeckArtifact,
   getProject,
   getProjectWorkspace,
   indexOutcomeKnowledge,
+  openHtmlPreviewWithAuth,
+  searchProjectDocuments,
 } from "@/lib/api";
 import type {
-  DefensePPTOutline,
   Project,
   ProjectWorkspaceChapter,
+  ProjectDocumentSearchResult,
   ProjectWorkspaceSnapshot,
 } from "@/lib/types";
 
 type ViewMode = "overview" | "literature" | "matrix" | "paper" | "knowledge" | "zotero" | "delivery";
+type HighlightType = "outcome" | "chunk" | "paper" | "note";
+type HtmlDeckTheme = "paper" | "swiss";
 
 const VIEWS: { key: ViewMode; label: string }[] = [
   { key: "overview", label: "项目概览" },
@@ -45,13 +52,19 @@ export default function ProjectDetailPage() {
 
   const [project, setProject] = useState<Project | null>(null);
   const [workspace, setWorkspace] = useState<ProjectWorkspaceSnapshot | null>(null);
-  const [defenseOutline, setDefenseOutline] = useState<DefensePPTOutline | null>(null);
   const [view, setView] = useState<ViewMode>("overview");
   const [kgRefreshKey, setKgRefreshKey] = useState(0);
   const [knowledgeExpanded, setKnowledgeExpanded] = useState(false);
   const [indexingOutcomeId, setIndexingOutcomeId] = useState<string | null>(null);
   const [deleteConfirm, setDeleteConfirm] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [documentQuery, setDocumentQuery] = useState("");
+  const [documentSearching, setDocumentSearching] = useState(false);
+  const [documentResults, setDocumentResults] = useState<ProjectDocumentSearchResult[]>([]);
+  const [documentSearchError, setDocumentSearchError] = useState<string | null>(null);
+  const highlightType = searchParams.get("highlight_type") as HighlightType | null;
+  const highlightId = searchParams.get("highlight_id");
+  const highlightChapterKey = searchParams.get("chapter_key");
 
   const setViewWithQuery = useCallback((nextView: ViewMode) => {
     setView(nextView);
@@ -68,19 +81,6 @@ export default function ProjectDetailPage() {
   const loadWorkspace = useCallback(async () => {
     const snapshot = await getProjectWorkspace(projectId);
     setWorkspace(snapshot);
-
-    const latestDraftId = snapshot.delivery.latest_draft?.id;
-    if (!latestDraftId) {
-      setDefenseOutline(null);
-      return;
-    }
-
-    try {
-      const outline = await getDefenseOutline(latestDraftId);
-      setDefenseOutline(outline);
-    } catch {
-      setDefenseOutline(null);
-    }
   }, [projectId]);
 
   useEffect(() => {
@@ -91,10 +91,19 @@ export default function ProjectDetailPage() {
   }, [searchParams]);
 
   useEffect(() => {
+    if (!highlightChapterKey) return;
+    setKnowledgeExpanded(true);
+    const timer = window.setTimeout(() => {
+      const node = document.getElementById(`chapter-trace-${highlightChapterKey}`);
+      node?.scrollIntoView({ behavior: "smooth", block: "center" });
+    }, 120);
+    return () => window.clearTimeout(timer);
+  }, [highlightChapterKey, view, workspace?.chapters]);
+
+  useEffect(() => {
     getProject(projectId).then(setProject).catch(() => setProject(null));
     loadWorkspace().catch(() => {
       setWorkspace(null);
-      setDefenseOutline(null);
     });
   }, [loadWorkspace, projectId]);
 
@@ -117,6 +126,27 @@ export default function ProjectDetailPage() {
       await loadWorkspace();
     } finally {
       setIndexingOutcomeId(null);
+    }
+  };
+
+  const handleDocumentSearch = async () => {
+    const query = documentQuery.trim();
+    if (!query) {
+      setDocumentResults([]);
+      setDocumentSearchError(null);
+      return;
+    }
+
+    setDocumentSearching(true);
+    setDocumentSearchError(null);
+    try {
+      const results = await searchProjectDocuments(projectId, query, 12);
+      setDocumentResults(results);
+    } catch (error: any) {
+      setDocumentSearchError(error?.message || "资料搜索失败");
+      setDocumentResults([]);
+    } finally {
+      setDocumentSearching(false);
     }
   };
 
@@ -145,6 +175,11 @@ export default function ProjectDetailPage() {
     }
     return items;
   }, [workspace?.chapters]);
+
+  const groupedDocumentResults = useMemo(
+    () => groupDocumentSearchResults(documentResults),
+    [documentResults],
+  );
 
   return (
     <div className="min-h-screen bg-[#faf7f2] paper-texture">
@@ -221,13 +256,13 @@ export default function ProjectDetailPage() {
               />
               <OverviewCard
                 title="论文阶段"
-                description="上传成果、生成大纲、逐章撰写并衔接答辩材料。"
+                description="上传成果、生成大纲并逐章撰写论文内容。"
                 action="进入论文工作流"
                 onClick={() => setViewWithQuery("paper")}
               />
               <OverviewCard
                 title="交付工作台"
-                description="集中查看草稿、开题报告和答辩材料的可交付状态。"
+                description="集中查看草稿、开题报告与 HTML Deck 预览等交付状态。"
                 action="打开交付"
                 onClick={() => setViewWithQuery("delivery")}
               />
@@ -277,8 +312,14 @@ export default function ProjectDetailPage() {
               </div>
 
               <div className="mt-6 space-y-3">
-                {(workspace?.outcomes || []).slice(0, 5).map((outcome) => (
-                  <div key={outcome.id} className="flex items-start justify-between gap-4 border-t border-[#f1ece4] pt-3 first:border-t-0 first:pt-0">
+                {(workspace?.outcomes || []).slice(0, 5).map((outcome) => {
+                  const highlighted = highlightType === "outcome" && highlightId === outcome.id;
+                  return (
+                  <div
+                    key={outcome.id}
+                    className="flex items-start justify-between gap-4 border-t border-[#f1ece4] pt-3 first:border-t-0 first:pt-0"
+                    style={highlighted ? { background: "#fff8e8", marginInline: "-8px", paddingInline: "8px", borderRadius: "8px" } : undefined}
+                  >
                     <div className="min-w-0">
                       <div className="text-sm font-medium text-[#2d2a26]">{outcome.name}</div>
                       <div className="mt-1 text-xs text-[#8b7b6b]">
@@ -310,7 +351,7 @@ export default function ProjectDetailPage() {
                       ) : null}
                     </div>
                   </div>
-                ))}
+                )})}
                 {workspace && workspace.outcomes.length === 0 ? (
                   <p className="text-xs text-[#8b7b6b]">
                     当前项目还没有成果材料。上传成果并入知识库后，这里会显示章节引用、来源跳转和交付承接情况。
@@ -320,42 +361,181 @@ export default function ProjectDetailPage() {
 
               {knowledgeExpanded ? (
                 <div className="mt-8 grid grid-cols-1 gap-6 lg:grid-cols-3">
-                  <KnowledgePanel
-                    title="成果入库状态"
-                    items={(workspace?.outcomes || []).map((outcome) => ({
-                      title: outcome.name,
-                      meta: `${outcome.outcome_type || "成果"} · ${formatKnowledgeStatus(outcome.knowledge_status, outcome.chunk_count)}`,
-                      tail: outcome.cited_by_chapters.length ? `${outcome.cited_by_chapters.length} 章引用` : "",
-                    }))}
-                    emptyText="暂无成果材料。"
-                  />
-                  <KnowledgePanel
-                    title="章节知识映射"
-                    items={(workspace?.chapters || []).map((chapter) => ({
-                      title: chapter.title,
-                      meta: `${formatChapterStatus(chapter.status)} · ${chapter.evidence_count} 条依据 · ${chapter.word_count} 字`,
-                      tail: chapter.data_based ? "真实数据" : "",
-                    }))}
-                    emptyText="暂无草稿章节映射。"
-                  />
-                  <KnowledgePanel
-                    title="证据与资料线索"
-                    items={[
-                      ...linkedNotes.slice(0, 6).map((note) => ({
-                        title: note.title,
-                        meta: `${note.note_type || "证据卡片"}${note.confidence ? ` · ${note.confidence}/100` : ""}`,
-                        tail: "卡片",
-                      })),
-                      ...linkedChunks.slice(0, 6).map((chunk) => ({
-                        title: chunk.title,
-                        meta: `${chunk.source_type || "资料片段"} · ${chunk.source_filename || "来源文件"}`,
-                        tail: "资料",
-                      })),
-                    ]}
-                    emptyText="暂无可展示的证据卡片或资料片段。"
+                    <KnowledgePanel
+                      title="成果入库状态"
+                      items={(workspace?.outcomes || []).map((outcome) => ({
+                        key: outcome.id,
+                        title: outcome.name,
+                        meta: `${outcome.outcome_type || "成果"} · ${formatKnowledgeStatus(outcome.knowledge_status, outcome.chunk_count)}`,
+                        tail: outcome.cited_by_chapters.length ? `${outcome.cited_by_chapters.length} 章引用` : "",
+                        highlighted: highlightType === "outcome" && highlightId === outcome.id,
+                      }))}
+                      emptyText="暂无成果材料。"
+                    />
+                    <KnowledgePanel
+                      title="章节知识映射"
+                      items={(workspace?.chapters || []).map((chapter) => ({
+                        key: chapter.chapter_key,
+                        title: chapter.title,
+                        meta: `${formatChapterStatus(chapter.status)} · ${chapter.evidence_count} 条依据 · ${chapter.word_count} 字`,
+                        tail: chapter.data_based ? "真实数据" : "",
+                        highlighted: highlightChapterKey === chapter.chapter_key,
+                      }))}
+                      emptyText="暂无草稿章节映射。"
+                    />
+                    <KnowledgePanel
+                      title="证据与资料线索"
+                      items={[
+                        ...linkedNotes.slice(0, 6).map((note) => ({
+                          key: note.id,
+                          title: note.title,
+                          meta: `${note.note_type || "证据卡片"}${note.confidence ? ` · ${note.confidence}/100` : ""}`,
+                          tail: "卡片",
+                          highlighted: highlightType === "note" && highlightId === note.id,
+                        })),
+                        ...linkedChunks.slice(0, 6).map((chunk) => ({
+                          key: chunk.id,
+                          title: chunk.title,
+                          meta: `${chunk.source_type || "资料片段"} · ${chunk.source_filename || "来源文件"}`,
+                          tail: "资料",
+                          highlighted: highlightType === "chunk" && highlightId === chunk.id,
+                        })),
+                      ]}
+                      emptyText="暂无可展示的证据卡片或资料片段。"
                   />
                 </div>
               ) : null}
+            </section>
+
+            <section className="rounded-sm border border-[#e8e1d5] bg-white p-7">
+              <div className="flex flex-wrap items-center justify-between gap-4">
+                <div>
+                  <p
+                    className="text-[11px] uppercase tracking-[0.2em] text-[#8b7355]"
+                    style={{ fontFamily: "var(--font-cormorant), serif" }}
+                  >
+                    Document Search
+                  </p>
+                  <h3
+                    className="mt-1 text-xl font-medium text-[#2d2a26]"
+                    style={{ fontFamily: "var(--font-cormorant), serif" }}
+                  >
+                    项目资料全文搜索
+                  </h3>
+                </div>
+                <span className="text-[11px] text-[#8b7b6b]">搜索已解析入知识库的项目资料片段</span>
+              </div>
+
+              <div className="mt-5 flex flex-col gap-3 lg:flex-row">
+                <input
+                  value={documentQuery}
+                  onChange={(event) => setDocumentQuery(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter") void handleDocumentSearch();
+                  }}
+                  placeholder="输入关键词，例如：RAG、实验数据、问卷、访谈..."
+                  className="h-11 flex-1 rounded-sm border border-[#e8e1d5] bg-[#fcfbf8] px-4 text-sm outline-none"
+                />
+                <button
+                  onClick={() => void handleDocumentSearch()}
+                  disabled={documentSearching}
+                  className="rounded-sm bg-[#1a1815] px-5 py-2.5 text-[11px] uppercase tracking-wide text-[#e8e0d0] disabled:opacity-50"
+                >
+                  {documentSearching ? "搜索中..." : "搜索资料"}
+                </button>
+              </div>
+
+              {documentSearchError ? (
+                <p className="mt-4 text-sm text-[#9a2f2f]">{documentSearchError}</p>
+              ) : null}
+
+              <div className="mt-6 space-y-3">
+                {groupedDocumentResults.length > 0 ? (
+                  groupedDocumentResults.map((group: {
+                    source_filename: string;
+                    title: string;
+                    source_type: string | null;
+                    download_url: string;
+                    hits: ProjectDocumentSearchResult[];
+                  }) => (
+                    <div key={`${group.source_filename}-${group.download_url}`} className="rounded-sm border border-[#efe8dc] bg-[#fcfbf8] p-4">
+                      <div className="flex items-start justify-between gap-4">
+                        <div className="min-w-0 flex-1">
+                          <div className="text-sm font-medium text-[#2d2a26]">{group.title}</div>
+                          <div className="mt-1 text-xs text-[#8b7355]">
+                            {group.source_filename || "来源文件"}
+                            {group.source_type ? ` · ${group.source_type}` : ""}
+                          </div>
+                          <div className="mt-4 space-y-3">
+                            {group.hits.map((item: ProjectDocumentSearchResult) => (
+                              <div key={item.chunk_id} className="rounded-sm border border-[#e8e1d5] bg-white p-3">
+                                {item.section_title ? (
+                                  <div className="mb-2 text-[11px] text-[#8b7355]">
+                                    所属章节：{item.section_title}
+                                  </div>
+                                ) : null}
+                                <p className="text-xs leading-6 text-[#8b7b6b]">
+                                  {highlightDocumentSearchText(item.content_excerpt, documentQuery).map((part: { text: string; highlight: boolean }, index: number) => (
+                                    <span
+                                      key={`${item.chunk_id}-${index}`}
+                                      className={part.highlight ? "rounded-sm bg-[#fff1c7] px-0.5 text-[#6f4f00]" : undefined}
+                                    >
+                                      {part.text}
+                                    </span>
+                                  ))}
+                                </p>
+                                {item.score_reasons.length > 0 ? (
+                                  <div className="mt-3 flex flex-wrap gap-2">
+                                    {item.score_reasons.map((reason, index) => (
+                                      <span key={`${item.chunk_id}-${reason}-${index}`} className="rounded-full border border-[#e8e1d5] bg-[#fcfbf8] px-2.5 py-1 text-[10px] text-[#8b7355]">
+                                        {reason}
+                                      </span>
+                                    ))}
+                                  </div>
+                                ) : null}
+                              </div>
+                            ))}
+                          </div>
+                          {buildDocumentUsageLinks(group, workspace, projectId).length > 0 ? (
+                            <div className="mt-4 border-t border-[#e8e1d5] pt-4">
+                              <div className="mb-2 text-[11px] uppercase tracking-[0.16em] text-[#8b7355]">
+                                写作页使用情况
+                              </div>
+                              <div className="flex flex-wrap gap-2">
+                                {buildDocumentUsageLinks(group, workspace, projectId).map((link: { key: string; title: string; href: string }) => (
+                                  <a
+                                    key={link.key}
+                                    href={link.href}
+                                    className="rounded-sm border border-[#e8e1d5] bg-white px-3 py-1.5 text-[11px] tracking-wide text-[#8b7355] transition-colors hover:border-[#d4c8b0] hover:text-[#5c4a3a]"
+                                  >
+                                    查看 {link.title}
+                                  </a>
+                                ))}
+                              </div>
+                            </div>
+                          ) : null}
+                        </div>
+                        <a
+                          href={group.download_url}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="shrink-0 rounded-sm border border-[#e8e1d5] px-3 py-1.5 text-[11px] tracking-wide text-[#8b7355] transition-colors hover:border-[#d4c8b0] hover:text-[#5c4a3a]"
+                        >
+                          下载原文件
+                        </a>
+                      </div>
+                    </div>
+                  ))
+                ) : documentQuery.trim() && !documentSearching ? (
+                  <p className="text-xs text-[#8b7b6b]">
+                    当前没有命中结果。可以换一个更具体的关键词，或者先确认资料已经完成“解析入知识库”。
+                  </p>
+                ) : (
+                  <p className="text-xs text-[#8b7b6b]">
+                    这里可以直接搜索项目上传资料中的正文内容，不必等到对话或写作环节被动命中。
+                  </p>
+                )}
+              </div>
             </section>
 
             {workspace?.chapters?.length ? (
@@ -384,11 +564,17 @@ export default function ProjectDetailPage() {
                 </div>
 
                 <div className="mt-6 grid grid-cols-1 gap-4 xl:grid-cols-2">
-                  {workspace.chapters.map((chapter) => (
-                    <ChapterTraceCard key={chapter.chapter_key} chapter={chapter} />
-                  ))}
-                </div>
-              </section>
+                    {workspace.chapters.map((chapter) => (
+                      <ChapterTraceCard
+                        key={chapter.chapter_key}
+                        chapter={chapter}
+                        highlightedChapter={highlightChapterKey === chapter.chapter_key}
+                        highlightedType={highlightType}
+                        highlightedId={highlightId}
+                      />
+                    ))}
+                  </div>
+                </section>
             ) : null}
 
             <div className="border-t border-[#e8e1d5] pt-8">
@@ -428,13 +614,12 @@ export default function ProjectDetailPage() {
           <DeliveryWorkspace
             projectId={projectId}
             workspace={workspace}
-            defenseOutline={defenseOutline}
             onOpenResearch={() => router.push(`/research?project_id=${projectId}`)}
             onOpenWriting={() => setViewWithQuery("paper")}
           />
         )}
 
-        {view === "literature" ? <ProjectLiteratureLibrary projectId={projectId} /> : null}
+        {view === "literature" ? <ProjectLiteratureLibrary projectId={projectId} highlightedPaperId={highlightType === "paper" ? highlightId : null} /> : null}
         {view === "matrix" ? <ProjectLiteratureMatrix projectId={projectId} /> : null}
         {view === "paper" ? <PaperWorkflow projectId={projectId} onBack={() => setViewWithQuery("overview")} /> : null}
         {view === "knowledge" ? <KnowledgeGraph key={kgRefreshKey} projectId={projectId} /> : null}
@@ -449,19 +634,58 @@ export default function ProjectDetailPage() {
 function DeliveryWorkspace({
   projectId,
   workspace,
-  defenseOutline,
   onOpenResearch,
   onOpenWriting,
 }: {
   projectId: string;
   workspace: ProjectWorkspaceSnapshot | null;
-  defenseOutline: DefensePPTOutline | null;
   onOpenResearch: () => void;
   onOpenWriting: () => void;
 }) {
   const latestDraft = workspace?.delivery.latest_draft ?? null;
   const latestProposal = workspace?.delivery.latest_proposal ?? null;
-  const defense = workspace?.delivery.defense ?? null;
+  const [deckMessage, setDeckMessage] = useState<string | null>(null);
+  const [generatingDraftDeck, setGeneratingDraftDeck] = useState(false);
+  const [generatingProposalDeck, setGeneratingProposalDeck] = useState(false);
+  const [htmlDeckTheme, setHtmlDeckTheme] = useState<HtmlDeckTheme>("paper");
+
+  const handlePreviewDraftDeck = async () => {
+    if (!latestDraft?.id) return;
+    setGeneratingDraftDeck(true);
+    setDeckMessage(null);
+    try {
+      const artifact = await generateHtmlDeckArtifact({
+        draft_id: latestDraft.id,
+        deck_title: latestDraft.title,
+        theme: htmlDeckTheme,
+      });
+      await openHtmlPreviewWithAuth(artifact.preview_url);
+      setDeckMessage("已打开论文草稿 HTML Deck 预览。");
+    } catch (error: any) {
+      setDeckMessage(error?.message || "论文草稿 HTML Deck 预览失败");
+    } finally {
+      setGeneratingDraftDeck(false);
+    }
+  };
+
+  const handlePreviewProposalDeck = async () => {
+    if (!latestProposal?.id) return;
+    setGeneratingProposalDeck(true);
+    setDeckMessage(null);
+    try {
+      const artifact = await generateHtmlDeckArtifact({
+        proposal_id: latestProposal.id,
+        deck_title: latestProposal.title,
+        theme: htmlDeckTheme,
+      });
+      await openHtmlPreviewWithAuth(artifact.preview_url);
+      setDeckMessage("已打开开题报告 HTML Deck 预览。");
+    } catch (error: any) {
+      setDeckMessage(error?.message || "开题报告 HTML Deck 预览失败");
+    } finally {
+      setGeneratingProposalDeck(false);
+    }
+  };
 
   return (
     <div className="space-y-8">
@@ -480,6 +704,29 @@ function DeliveryWorkspace({
         </h2>
       </div>
 
+      <section className="rounded-sm border border-[#e8e1d5] bg-white p-5">
+        <div>
+          <p className="text-[11px] uppercase tracking-[0.18em] text-[#8b7355]">HTML Deck Theme</p>
+          <p className="mt-1 text-sm text-[#8b7b6b]">实验型网页 Deck 预览将使用这里选择的风格。</p>
+        </div>
+        <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-2">
+          <HtmlDeckThemeCard
+            title="Paper"
+            subtitle="论文页风格"
+            description="偏纸面、衬线字体、适合学术汇报和论文导出预览。"
+            active={htmlDeckTheme === "paper"}
+            onClick={() => setHtmlDeckTheme("paper")}
+          />
+          <HtmlDeckThemeCard
+            title="Swiss"
+            subtitle="现代展示风格"
+            description="更现代的无衬线演示观感，适合路演、预演和页面展示。"
+            active={htmlDeckTheme === "swiss"}
+            onClick={() => setHtmlDeckTheme("swiss")}
+          />
+        </div>
+      </section>
+
       <div className="grid grid-cols-1 gap-5 xl:grid-cols-3">
         <DeliveryCard
           title="论文草稿"
@@ -490,6 +737,9 @@ function DeliveryWorkspace({
           secondaryLinks={latestDraft ? [
             { label: "下载 DOCX", href: latestDraft.download_docx_url },
             { label: "下载 PDF", href: latestDraft.download_pdf_url },
+          ] : []}
+          secondaryActions={latestDraft ? [
+            { label: generatingDraftDeck ? "生成中..." : "预览 HTML Deck", onClick: handlePreviewDraftDeck, disabled: generatingDraftDeck },
           ] : []}
         />
         <DeliveryCard
@@ -502,18 +752,17 @@ function DeliveryWorkspace({
             { label: "下载 DOCX", href: latestProposal.download_docx_url },
             { label: "下载 PDF", href: latestProposal.download_pdf_url },
           ] : []}
-        />
-        <DeliveryCard
-          title="答辩材料"
-          subtitle={defense?.ready ? (defenseOutline ? `${defenseOutline.total_slides} 页答辩大纲可生成` : "已具备答辩材料生成基础") : "当前草稿尚不足以形成答辩材料"}
-          description={defense?.has_real_data ? "当前草稿包含真实数据标记，可直接进入答辩材料生成。" : "当前草稿真实数据标记不足，建议补充成果材料后再生成答辩材料。"}
-          primaryLabel="进入论文工作流"
-          onPrimary={onOpenWriting}
-          secondaryLinks={defenseOutline ? [
-            { label: `大纲 ${defenseOutline.total_slides} 页`, href: `/projects/${projectId}?view=paper` },
+          secondaryActions={latestProposal ? [
+            { label: generatingProposalDeck ? "生成中..." : "预览 HTML Deck", onClick: handlePreviewProposalDeck, disabled: generatingProposalDeck },
           ] : []}
         />
       </div>
+
+      {deckMessage ? (
+        <div className="rounded-sm border border-[#e8e1d5] bg-white px-4 py-3 text-sm text-[#8b7355]">
+          {deckMessage}
+        </div>
+      ) : null}
 
       <section className="rounded-sm border border-[#e8e1d5] bg-white p-7">
         <div className="mb-5">
@@ -534,20 +783,40 @@ function DeliveryWorkspace({
         <div className="grid grid-cols-1 gap-4 md:grid-cols-4">
           <KnowledgeStat label="论文草稿" value={latestDraft ? `${latestDraft.completion_rate}%` : "未开始"} />
           <KnowledgeStat label="开题报告" value={latestProposal ? "已生成" : "待生成"} />
-          <KnowledgeStat label="答辩大纲" value={defenseOutline ? `${defenseOutline.total_slides} 页` : "待生成"} />
-          <KnowledgeStat label="真实数据" value={defense?.has_real_data ? "已具备" : "不足"} />
+          <KnowledgeStat label="HTML Deck 预览" value={latestDraft || latestProposal ? "可生成" : "待内容"} />
+          <KnowledgeStat label="成果材料" value={`${workspace?.stats.outcomes_total ?? 0} 项`} />
         </div>
       </section>
     </div>
   );
 }
 
-function ChapterTraceCard({ chapter }: { chapter: ProjectWorkspaceChapter }) {
+function ChapterTraceCard({
+  chapter,
+  highlightedChapter,
+  highlightedType,
+  highlightedId,
+}: {
+  chapter: ProjectWorkspaceChapter;
+  highlightedChapter?: boolean;
+  highlightedType?: HighlightType | null;
+  highlightedId?: string | null;
+}) {
   const [expanded, setExpanded] = useState(false);
   const hasEvidence = chapter.evidence_count > 0;
 
+  useEffect(() => {
+    if (highlightedChapter && hasEvidence) {
+      setExpanded(true);
+    }
+  }, [hasEvidence, highlightedChapter]);
+
   return (
-    <div className="rounded-sm border border-[#e8e1d5] bg-white p-5">
+    <div
+      id={`chapter-trace-${chapter.chapter_key}`}
+      className="rounded-sm border border-[#e8e1d5] bg-white p-5"
+      style={highlightedChapter ? { boxShadow: "0 0 0 2px rgba(184,134,11,0.24)", background: "#fffaf0" } : undefined}
+    >
       <div className="flex items-start justify-between gap-3">
         <div>
           <h4 className="text-base font-medium text-[#2d2a26]" style={{ fontFamily: "var(--font-cormorant), serif" }}>
@@ -621,9 +890,12 @@ function ChapterTraceCard({ chapter }: { chapter: ProjectWorkspaceChapter }) {
                 badge="成果"
                 title={outcome.name}
                 meta={outcome.outcome_type || "成果材料"}
-                actionLabel={outcome.download_url ? "下载文件" : outcome.action_label}
-                href={outcome.download_url || outcome.action_url}
-                external={Boolean(outcome.download_url)}
+                actionLabel="查看成果"
+                href={outcome.action_url || outcome.download_url || "#"}
+                external={false}
+                secondaryLabel={outcome.download_url ? "下载文件" : undefined}
+                secondaryHref={outcome.download_url || undefined}
+                highlighted={highlightedType === "outcome" && highlightedId === outcome.id}
               />
             ))}
           />
@@ -639,6 +911,7 @@ function ChapterTraceCard({ chapter }: { chapter: ProjectWorkspaceChapter }) {
                 meta={[paper.venue, paper.year ? `${paper.year}` : null, paper.citation_count ? `被引 ${paper.citation_count}` : null].filter(Boolean).join(" · ") || "项目文献库"}
                 actionLabel={paper.action_label}
                 href={paper.action_url}
+                highlighted={highlightedType === "paper" && highlightedId === paper.id}
               />
             ))}
           />
@@ -655,6 +928,7 @@ function ChapterTraceCard({ chapter }: { chapter: ProjectWorkspaceChapter }) {
                 description={note.evidence_text || "该证据卡片暂无摘录，需进入文献视图查看。"}
                 actionLabel={note.action_label}
                 href={note.action_url}
+                highlighted={highlightedType === "note" && highlightedId === note.id}
               />
             ))}
           />
@@ -668,9 +942,11 @@ function ChapterTraceCard({ chapter }: { chapter: ProjectWorkspaceChapter }) {
                 badge="资料"
                 title={chunk.title}
                 meta={[chunk.source_type || "资料片段", chunk.source_filename || null].filter(Boolean).join(" · ")}
-                actionLabel="下载来源文件"
-                href={chunk.download_url}
-                external
+                actionLabel="查看片段"
+                href={chapter.action_url}
+                secondaryLabel="下载原文件"
+                secondaryHref={chunk.download_url}
+                highlighted={highlightedType === "chunk" && highlightedId === chunk.id}
               />
             ))}
           />
@@ -713,6 +989,9 @@ function EvidenceLinkCard({
   actionLabel,
   href,
   external = false,
+  secondaryLabel,
+  secondaryHref,
+  highlighted = false,
 }: {
   badge: string;
   title: string;
@@ -721,9 +1000,15 @@ function EvidenceLinkCard({
   actionLabel: string;
   href: string;
   external?: boolean;
+  secondaryLabel?: string;
+  secondaryHref?: string;
+  highlighted?: boolean;
 }) {
   return (
-    <div className="flex items-start justify-between gap-4 rounded-sm border border-[#ece5d8] bg-white p-3">
+    <div
+      className="flex items-start justify-between gap-4 rounded-sm border border-[#ece5d8] bg-white p-3"
+      style={highlighted ? { background: "#fff8e8", borderColor: "#e2c88f" } : undefined}
+    >
       <div className="min-w-0 flex-1">
         <div className="mb-1 flex items-center gap-2">
           <span className="rounded-sm bg-[#f7efe0] px-2 py-0.5 text-[10px] uppercase tracking-wide text-[#8a5a00]">
@@ -734,14 +1019,26 @@ function EvidenceLinkCard({
         <div className="text-[11px] text-[#8b7355]">{meta}</div>
         {description ? <p className="mt-2 text-xs leading-6 text-[#8b7b6b]">{description}</p> : null}
       </div>
-      <a
-        href={href}
-        target={external ? "_blank" : undefined}
-        rel={external ? "noreferrer" : undefined}
-        className="shrink-0 rounded-sm border border-[#e8e1d5] px-3 py-1.5 text-[11px] tracking-wide text-[#8b7355] transition-colors hover:border-[#d4c8b0] hover:text-[#5c4a3a]"
-      >
-        {actionLabel}
-      </a>
+      <div className="flex shrink-0 flex-col gap-2">
+        <a
+          href={href}
+          target={external ? "_blank" : undefined}
+          rel={external ? "noreferrer" : undefined}
+          className="rounded-sm border border-[#e8e1d5] px-3 py-1.5 text-[11px] tracking-wide text-[#8b7355] transition-colors hover:border-[#d4c8b0] hover:text-[#5c4a3a]"
+        >
+          {actionLabel}
+        </a>
+        {secondaryHref && secondaryLabel ? (
+          <a
+            href={secondaryHref}
+            target="_blank"
+            rel="noreferrer"
+            className="rounded-sm border border-[#e8e1d5] px-3 py-1.5 text-[11px] tracking-wide text-[#8b7355] transition-colors hover:border-[#d4c8b0] hover:text-[#5c4a3a]"
+          >
+            {secondaryLabel}
+          </a>
+        ) : null}
+      </div>
     </div>
   );
 }
@@ -753,6 +1050,7 @@ function DeliveryCard({
   primaryLabel,
   onPrimary,
   secondaryLinks,
+  secondaryActions,
 }: {
   title: string;
   subtitle: string;
@@ -760,6 +1058,7 @@ function DeliveryCard({
   primaryLabel: string;
   onPrimary: () => void;
   secondaryLinks: { label: string; href: string }[];
+  secondaryActions?: { label: string; onClick: () => void; disabled?: boolean }[];
 }) {
   return (
     <div className="rounded-sm border border-[#e8e1d5] bg-white p-6">
@@ -786,8 +1085,68 @@ function DeliveryCard({
             {item.label}
           </a>
         ))}
+        {(secondaryActions || []).map((item) => (
+          <button
+            key={item.label}
+            type="button"
+            onClick={item.onClick}
+            disabled={item.disabled}
+            className="rounded-sm border border-[#e8e1d5] px-4 py-2 text-[11px] uppercase tracking-wide text-[#8b7355] disabled:opacity-50"
+          >
+            {item.label}
+          </button>
+        ))}
       </div>
     </div>
+  );
+}
+
+function HtmlDeckThemeCard({
+  title,
+  subtitle,
+  description,
+  active,
+  onClick,
+}: {
+  title: string;
+  subtitle: string;
+  description: string;
+  active: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="rounded-sm border p-4 text-left transition-all"
+      style={{
+        borderColor: active ? "#cba35d" : "#e8e1d5",
+        background: active ? "#fffaf0" : "#fcfbf8",
+        boxShadow: active ? "0 0 0 1px rgba(203,163,93,0.22)" : "none",
+      }}
+    >
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <div className="text-[11px] uppercase tracking-[0.16em] text-[#8b7355]">{subtitle}</div>
+          <div
+            className="mt-2 text-lg font-medium text-[#2d2a26]"
+            style={{ fontFamily: title === "Swiss" ? "\"Helvetica Neue\", Arial, sans-serif" : "var(--font-cormorant), serif" }}
+          >
+            {title}
+          </div>
+        </div>
+        <span
+          className="rounded-full px-2.5 py-1 text-[10px] uppercase tracking-wide"
+          style={{
+            background: active ? "#f7efe0" : "#f1ece4",
+            color: active ? "#8a5a00" : "#8b7355",
+          }}
+        >
+          {active ? "当前使用" : "可选"}
+        </span>
+      </div>
+      <p className="mt-3 text-xs leading-6 text-[#8b7b6b]">{description}</p>
+    </button>
   );
 }
 
@@ -806,7 +1165,7 @@ function KnowledgePanel({
   emptyText,
 }: {
   title: string;
-  items: { title: string; meta: string; tail?: string }[];
+  items: { key: string; title: string; meta: string; tail?: string; highlighted?: boolean }[];
   emptyText: string;
 }) {
   return (
@@ -816,8 +1175,12 @@ function KnowledgePanel({
       </h4>
       <div className="mt-4 space-y-3">
         {items.length > 0 ? (
-          items.map((item, index) => (
-            <div key={`${item.title}-${index}`} className="flex items-start justify-between gap-3 border-t border-[#f1ece4] pt-3 first:border-t-0 first:pt-0">
+          items.map((item) => (
+            <div
+              key={item.key}
+              className="flex items-start justify-between gap-3 border-t border-[#f1ece4] pt-3 first:border-t-0 first:pt-0"
+              style={item.highlighted ? { background: "#fff8e8", marginInline: "-8px", paddingInline: "8px", borderRadius: "8px" } : undefined}
+            >
               <div className="min-w-0">
                 <div className="truncate text-sm text-[#2d2a26]">{item.title}</div>
                 <div className="mt-1 text-xs text-[#8b7b6b]">{item.meta}</div>

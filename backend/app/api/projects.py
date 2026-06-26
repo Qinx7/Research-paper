@@ -22,7 +22,8 @@ from ..models.zotero_sync import ZoteroSync
 from ..schemas.project import ProjectCreate, ProjectUpdate, ProjectOut
 from ..services.auth_dependency import get_current_user
 from ..services.ownership import get_owned_project
-from ..services.project_workspace_service import load_project_workspace_snapshot
+from ..services.project_document_search_service import search_project_documents
+from ..services.project_workspace_service import load_project_workspace_snapshot_for_draft
 from ..services.upload_service import delete_upload
 
 logger = logging.getLogger(__name__)
@@ -90,12 +91,29 @@ def get_project(
 @router.get("/{project_id}/workspace")
 def get_project_workspace(
     project_id: UUID,
+    draft_id: UUID | None = None,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     """获取项目知识沉淀与交付工作台快照。"""
     project = get_owned_project(project_id, current_user, db)
-    return load_project_workspace_snapshot(db, project.id)
+    return load_project_workspace_snapshot_for_draft(db, project.id, draft_id)
+
+
+@router.get("/{project_id}/document-search")
+def search_project_document_api(
+    project_id: UUID,
+    q: str,
+    limit: int = 20,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """搜索项目内已解析入库的资料片段。"""
+    project = get_owned_project(project_id, current_user, db)
+    query = (q or "").strip()
+    if not query:
+        return []
+    return search_project_documents(db, project.id, query, limit=limit)
 
 
 @router.patch("/{project_id}", response_model=ProjectOut)

@@ -4,6 +4,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { analyzeLiterature, analyzeRequirement, generateDirections } from "@/lib/api";
 import type { ReactNode } from "react";
+import { buildSourceStatusSections } from "@/lib/searchExplain.mjs";
 import type {
   AnalyzeLiteratureResponse,
   AnalyzeRequirementResponse,
@@ -13,6 +14,7 @@ import type {
   Paper,
   RequirementAnalysis,
   ResearchDirection,
+  SearchDiagnostics,
   SearchSummary,
   SourceStatusInfo,
 } from "@/lib/types";
@@ -25,6 +27,7 @@ type Props = {
   sourceSummary: string;
   sourceStatuses: Record<string, SourceStatusInfo>;
   searchSummary: SearchSummary | null;
+  searchDiagnostics: SearchDiagnostics | null;
   referencesOpen: boolean;
   savingDirectionTitle: string | null;
   savedDirectionTitles: string[];
@@ -56,6 +59,7 @@ export default function TopicResearchPanel({
   sourceSummary,
   sourceStatuses,
   searchSummary,
+  searchDiagnostics,
   referencesOpen,
   savingDirectionTitle,
   savedDirectionTitles,
@@ -201,6 +205,8 @@ export default function TopicResearchPanel({
         papersCount={papers.length}
         sourceSummary={sourceSummary}
         evidenceProfile={evidenceProfile}
+        sourceStatuses={sourceStatuses}
+        searchDiagnostics={searchDiagnostics}
         referencesOpen={referencesOpen}
         onOpenReferences={onOpenReferences}
       />
@@ -342,6 +348,8 @@ function QueryHeader({
   papersCount,
   sourceSummary,
   evidenceProfile,
+  sourceStatuses,
+  searchDiagnostics,
   referencesOpen,
   onOpenReferences,
 }: {
@@ -349,9 +357,13 @@ function QueryHeader({
   papersCount: number;
   sourceSummary: string;
   evidenceProfile: EvidenceProfile;
+  sourceStatuses: Record<string, SourceStatusInfo>;
+  searchDiagnostics: SearchDiagnostics | null;
   referencesOpen: boolean;
   onOpenReferences: () => void;
 }) {
+  const sourceSections = buildSourceStatusSections(sourceStatuses);
+
   return (
     <header className="rounded-[32px] border border-[#dfe8ef] bg-white p-7 shadow-[0_20px_70px_rgba(16,19,24,0.07)]">
       <div className="flex flex-col gap-5 md:flex-row md:items-start md:justify-between">
@@ -379,6 +391,31 @@ function QueryHeader({
         <span className="rounded-full bg-[#f4f6f8] px-3 py-1.5">{sourceSummary}</span>
         <span className={`rounded-full px-3 py-1.5 ${evidenceProfile.strengthClass}`}>{evidenceProfile.strengthLabel}</span>
       </div>
+      {(sourceSections.items.length || searchDiagnostics?.overview) ? (
+        <div className="mt-5 rounded-2xl border border-[#e7edf3] bg-[#fbfcfd] px-4 py-4">
+          <p className="text-xs font-black uppercase tracking-[0.16em] text-[#7a8591]">来源状态</p>
+          <p className="mt-2 text-sm leading-6 text-[#40505e]">
+            {searchDiagnostics?.overview || sourceSections.summary}
+          </p>
+          <div className="mt-3 flex flex-wrap gap-2">
+            {sourceSections.healthy.slice(0, 4).map((item) => (
+              <span key={`healthy-${item.source}`} className="rounded-full border border-[#bfe5d1] bg-[#eefaf3] px-3 py-1.5 text-[11px] font-bold text-[#16613a]">
+                {item.label} · {item.text}
+              </span>
+            ))}
+            {sourceSections.empty.slice(0, 4).map((item) => (
+              <span key={`empty-${item.source}`} className="rounded-full border border-[#dfe4e8] bg-[#f6f8fa] px-3 py-1.5 text-[11px] font-bold text-[#5e6874]">
+                {item.label} · {item.text}
+              </span>
+            ))}
+            {sourceSections.risky.slice(0, 4).map((item) => (
+              <span key={`risky-${item.source}`} className="rounded-full border border-[#f1d49b] bg-[#fff7e8] px-3 py-1.5 text-[11px] font-bold text-[#8a5a00]">
+                {item.label} · {item.text}
+              </span>
+            ))}
+          </div>
+        </div>
+      ) : null}
       <EvidenceOverview evidenceProfile={evidenceProfile} />
     </header>
   );

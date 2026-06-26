@@ -19,7 +19,6 @@ from .api.proposal import router as proposal_router
 from .api.tasks import router as tasks_router
 from .api.outcomes import router as outcomes_router
 from .api.drafts import router as drafts_router
-from .api.defense import router as defense_router
 from .api.zotero import router as zotero_router
 from .api.auth import router as auth_router
 from .api.paper_notes import router as paper_notes_router
@@ -28,6 +27,10 @@ from .api.agent_workflows import router as agent_workflows_router
 from .core.database import engine, Base, SessionLocal
 from .core.config import settings
 from . import models  # noqa: F401  # 导入模型，确保 create_all 能发现所有表
+from .services.migration_service import (
+    apply_runtime_schema_bootstrap,
+    should_run_runtime_schema_bootstrap,
+)
 
 # 启动前安全检查
 import logging
@@ -50,18 +53,8 @@ if settings.APP_ENV == "production":
         logger.error("生产环境必须设置安全的 MINIO_SECRET_KEY")
         sys.exit(1)
 
-# 启动时自动建表（数据库不可用时不阻塞启动）
-try:
-    Base.metadata.create_all(bind=engine)
-except Exception as exc:
-    import logging
-
-    logging.getLogger(__name__).warning("初始化数据库表失败: %s", exc)
-
-# 启用 pgvector 扩展并创建向量存储表（数据库不可用时不阻塞启动）
-db = None
-try:
-    db = SessionLocal()
+# 过渡期兼容：正式迁移应优先使用 Alembic；此引导仅用于当前环境兜底。
+if should_run_runtime_schema_bootstrap(settings):
     from .services.embedding_service import ensure_document_vectors_table
     from .services.schema_compat import (
         ensure_conversation_user_column,
@@ -69,17 +62,18 @@ try:
         ensure_research_direction_content_column,
     )
 
-    ensure_conversation_user_column(db)
-    ensure_research_direction_content_column(db)
-    ensure_project_design_content_column(db)
-    ensure_document_vectors_table(db)
-except Exception as exc:
-    import logging
-
-    logging.getLogger(__name__).warning("初始化向量存储失败: %s", exc)
-finally:
-    if db is not None:
-        db.close()
+    apply_runtime_schema_bootstrap(
+        engine=engine,
+        base=Base,
+        session_factory=SessionLocal,
+        close_db=lambda db: db.close(),
+        ensure_conversation_user_column=ensure_conversation_user_column,
+        ensure_research_direction_content_column=ensure_research_direction_content_column,
+        ensure_project_design_content_column=ensure_project_design_content_column,
+        ensure_document_vectors_table=ensure_document_vectors_table,
+    )
+else:
+    logger.info("已关闭运行时 schema 引导，数据库结构应通过 Alembic 迁移维护。")
 
 app = FastAPI(
     title="Literature-driven Graduate Research Agent",
@@ -105,7 +99,6 @@ app.include_router(proposal_router, prefix="/api")
 app.include_router(tasks_router, prefix="/api")
 app.include_router(outcomes_router, prefix="/api")
 app.include_router(drafts_router, prefix="/api")
-app.include_router(defense_router, prefix="/api")
 app.include_router(zotero_router, prefix="/api")
 app.include_router(auth_router, prefix="/api")
 app.include_router(paper_notes_router, prefix="/api")

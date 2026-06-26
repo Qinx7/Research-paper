@@ -3,6 +3,7 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
 import * as api from "../lib/api";
 import type { Outcome, OutcomeTypeInfo, OutcomeSummary, ReadinessCheck } from "../lib/types";
+import { buildOutcomeStructuredPreview } from "../lib/outcomeStructuredPreview.mjs";
 
 interface Props {
   projectId: string;
@@ -288,6 +289,10 @@ export default function OutcomeManager({ projectId, onReadyChange }: Props) {
             {outcomes.map((o) => (
               <div key={o.id} className="bg-white border border-gray-200 rounded-lg p-4 flex items-start justify-between">
                 <div className="flex-1 min-w-0">
+                  {(() => {
+                    const structuredPreview = buildOutcomeStructuredPreview(o);
+                    return (
+                      <>
                   <div className="flex items-center gap-2 mb-1">
                     <span className="text-xs px-2 py-0.5 rounded-full bg-gray-100 text-gray-600">
                       {OUTCOME_TYPE_LABELS[o.outcome_type] || o.outcome_type}
@@ -301,6 +306,66 @@ export default function OutcomeManager({ projectId, onReadyChange }: Props) {
                   {o.extra_data?.knowledge_error && (
                     <p className="mt-2 text-xs text-red-500 line-clamp-2">{o.extra_data.knowledge_error}</p>
                   )}
+                  {(o.extra_data?.knowledge_parser || o.extra_data?.knowledge_strategy_chain?.length || o.extra_data?.knowledge_error_stage) && (
+                    <div className="mt-2 space-y-1 text-[11px] text-gray-500">
+                      {o.extra_data?.knowledge_parser && (
+                        <div>解析路径：{o.extra_data.knowledge_parser}</div>
+                      )}
+                      {o.extra_data?.knowledge_strategy_chain?.length ? (
+                        <div>策略链：{o.extra_data.knowledge_strategy_chain.join(" → ")}</div>
+                      ) : null}
+                      {typeof o.extra_data?.knowledge_used_ocr === "boolean" ? (
+                        <div>OCR：{o.extra_data.knowledge_used_ocr ? "已进入 OCR" : "未进入 OCR"}</div>
+                      ) : null}
+                      {o.extra_data?.knowledge_error_stage ? (
+                        <div>失败阶段：{o.extra_data.knowledge_error_stage}</div>
+                      ) : null}
+                    </div>
+                  )}
+                  {structuredPreview.visible && (
+                    <div className="mt-3 rounded-lg border border-blue-100 bg-blue-50/60 p-3">
+                      <div className="mb-2 text-[11px] font-medium text-blue-900">论文型 PDF 自动抽取结果</div>
+                      {structuredPreview.title ? (
+                        <div className="mb-2 text-[12px] text-blue-900">
+                          <span className="font-medium">标题：</span>
+                          {structuredPreview.title}
+                        </div>
+                      ) : null}
+                      {structuredPreview.abstract ? (
+                        <div className="mb-2 text-[12px] leading-5 text-blue-800">
+                          <span className="font-medium">摘要预览：</span>
+                          {structuredPreview.abstract}
+                        </div>
+                      ) : null}
+                      <div className="flex flex-wrap gap-2 text-[11px] text-blue-800">
+                        <span className="rounded-full border border-blue-200 bg-white px-2 py-0.5">
+                          标题置信度：{structuredPreview.confidence.title}
+                        </span>
+                        <span className="rounded-full border border-blue-200 bg-white px-2 py-0.5">
+                          摘要置信度：{structuredPreview.confidence.abstract}
+                        </span>
+                        <span className="rounded-full border border-blue-200 bg-white px-2 py-0.5">
+                          参考文献区：{structuredPreview.referencesDetected ? `已识别（${structuredPreview.confidence.references}）` : "未识别"}
+                        </span>
+                      </div>
+                      {structuredPreview.referencesList.length > 0 && (
+                        <div className="mt-2 space-y-1 text-[11px] leading-5 text-blue-800">
+                          <div className="font-medium">参考文献预览：</div>
+                          {structuredPreview.referencesList.map((item: string, index: number) => (
+                            <div key={`${o.id}-ref-${index}`} className="line-clamp-2">
+                              {item}
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                      <p className="mt-2 text-[11px] leading-5 text-blue-700">
+                        该结果来自自动规则抽取，后续如需更高精度可升级学术论文结构解析服务。
+                      </p>
+                    </div>
+                  )}
+                      </>
+                    );
+                  })()}
                 </div>
                 <div className="flex gap-2 ml-3 shrink-0">
                   {isKnowledgeParsable(o) && (

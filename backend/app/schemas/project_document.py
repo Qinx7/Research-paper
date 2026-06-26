@@ -14,6 +14,10 @@ class OutcomeKnowledgeStatus(BaseModel):
     message: str
     error: str | None = None
     indexed_at: datetime | None = None
+    parser: str | None = None
+    strategy_chain: list[str] = []
+    used_ocr: bool = False
+    error_stage: str | None = None
 
     @field_validator("outcome_id", mode="before")
     @classmethod

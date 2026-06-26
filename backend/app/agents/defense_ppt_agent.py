@@ -18,7 +18,7 @@ from .ppt_agent import (
 
 
 class DefensePPTAgent:
-    """毕业答辩 PPT Agent —— 基于论文内容生成 15 页答辩幻灯片"""
+    """毕业答辩 PPT Agent —— 基于论文内容生成 14 页答辩幻灯片"""
 
     def __init__(self, output_dir: str = ""):
         if not output_dir:
@@ -88,7 +88,7 @@ class DefensePPTAgent:
             _add_ending_slide(prs, style=style, num=num, total=total)
 
     def _build_slides(self, title: str, content: dict, outcomes_summary: str, *, style: dict) -> list[dict]:
-        """构建答辩 PPT 的 15 页幻灯片定义。
+        """构建答辩 PPT 的 14 页幻灯片定义。
 
         根据真实数据可用性自适应调整实验/结果页内容。
         """
@@ -195,18 +195,7 @@ class DefensePPTAgent:
                         "items": _split_paragraphs(outcomes_summary, 6) if outcomes_summary else ["暂无上传成果"],
                         "color": col_p})
 
-        # 14. 答辩问题预测
-        slides.append({"type": "numbered", "title": "可能被问到的答辩问题",
-                        "items": [
-                            "本研究与已有工作的本质区别是什么？",
-                            "实验设计的合理性和局限性？",
-                            "研究结果的普适性如何？",
-                            "技术方案的可扩展性？",
-                            "研究过程中的主要挑战和解决方案？",
-                        ],
-                        "color": col_a})
-
-        # 15. 致谢
+        # 14. 致谢
         slides.append({"type": "ending"})
 
         return slides

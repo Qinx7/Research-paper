@@ -126,12 +126,61 @@ def validate_generated_chapter_grounding(
     evidence_items: list[dict] | None = None,
 ) -> dict:
     """校验论文章节返回的 citations/data_based 是否具备可验证依据。"""
+    if chapter_key != "chapter_1_introduction":
+        validated = dict(result)
+        validated["citations"] = []
+        support_texts: list[str] = []
+        for outcome in outcomes or []:
+            name = str(getattr(outcome, "name", "") or "").strip()
+            if name:
+                support_texts.append(name)
+            description = str(getattr(outcome, "description", "") or "").strip()
+            if description:
+                support_texts.append(description)
+        for paper in papers or []:
+            title = str(getattr(paper, "title", "") or "").strip()
+            if title:
+                support_texts.append(title)
+            abstract = str(getattr(paper, "abstract", "") or "").strip()
+            if abstract:
+                support_texts.append(abstract)
+        for item in evidence_items or []:
+            title = str(item.get("title", "") or "").strip()
+            if title:
+                support_texts.append(title)
+            source_title = str(item.get("source_title", "") or "").strip()
+            if source_title:
+                support_texts.append(source_title)
+            evidence_text = str(item.get("evidence_text", "") or item.get("content_excerpt", "") or "").strip()
+            if evidence_text:
+                support_texts.append(evidence_text)
+
+        has_any_outcomes = bool(outcomes)
+        has_experiment_outcomes = any(
+            str(getattr(outcome, "outcome_type", "") or "") in {"experiment_data", "survey_data", "experiment_record"}
+            for outcome in (outcomes or [])
+        )
+        if result.get("data_based") and not has_any_outcomes:
+            raise ValueError("章节标记为基于真实数据，但项目中不存在任何真实成果。")
+        if chapter_key == "chapter_5_experiment" and result.get("data_based") and not has_experiment_outcomes:
+            raise ValueError("实验章节标记为基于真实数据，但缺少实验数据类成果。")
+
+        unsupported_claims = _find_unsupported_specific_data_claims(
+            str(result.get("content", "") or ""),
+            support_texts=support_texts,
+        )
+        if unsupported_claims:
+            raise ValueError(f"检测到缺少依据的具体数据表述：{', '.join(unsupported_claims)}")
+        return validated
+
     allowed_labels: dict[str, str] = {}
+    allowed_references: list[str] = []
     support_texts: list[str] = []
     for outcome in outcomes or []:
         name = str(getattr(outcome, "name", "") or "").strip()
         if name:
             allowed_labels[_normalize_text(name)] = name
+            allowed_references.append(name)
             support_texts.append(name)
         description = str(getattr(outcome, "description", "") or "").strip()
         if description:
@@ -140,6 +189,7 @@ def validate_generated_chapter_grounding(
         title = str(getattr(paper, "title", "") or "").strip()
         if title:
             allowed_labels[_normalize_text(title)] = title
+            allowed_references.append(title)
             support_texts.append(title)
         abstract = str(getattr(paper, "abstract", "") or "").strip()
         if abstract:
@@ -148,24 +198,31 @@ def validate_generated_chapter_grounding(
         title = str(item.get("title", "") or "").strip()
         if title:
             allowed_labels[_normalize_text(title)] = title
+            allowed_references.append(title)
             support_texts.append(title)
         source_title = str(item.get("source_title", "") or "").strip()
         if source_title:
             allowed_labels[_normalize_text(source_title)] = source_title
+            allowed_references.append(source_title)
             support_texts.append(source_title)
         evidence_text = str(item.get("evidence_text", "") or item.get("content_excerpt", "") or "").strip()
         if evidence_text:
             support_texts.append(evidence_text)
 
+    allowed_references = _dedupe_preserve_order(allowed_references)
+
     raw_citations = result.get("citations", []) or []
     unknown_citations: list[str] = []
     normalized_citations: list[str] = []
     for citation in raw_citations:
-        matched = allowed_labels.get(_normalize_text(str(citation)))
+        citation_text = str(citation)
+        matched = allowed_labels.get(_normalize_text(citation_text))
+        if not matched:
+            matched = _match_allowed_reference(citation_text, allowed_references)
         if matched:
             normalized_citations.append(matched)
         else:
-            unknown_citations.append(str(citation))
+            unknown_citations.append(citation_text)
 
     if unknown_citations:
         raise ValueError(f"检测到无依据引用：{', '.join(unknown_citations)}")
@@ -201,7 +258,7 @@ def _find_unsupported_specific_data_claims(content: str, *, support_texts: list[
     patterns = [
         r"\d+(?:\.\d+)?\s*%",
         r"百分之[一二三四五六七八九十百零点\d]+",
-        r"\d+(?:\.\d+)?\s*(?:名|人|份|例|个样本|组样本)",
+        r"\d+(?:\.\d+)?\s*(?:名|人|份|例|个样本|组样本)(?![一-龥A-Za-z])",
     ]
     claims = _dedupe_preserve_order(
         match.group(0).strip()

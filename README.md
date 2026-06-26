@@ -292,7 +292,7 @@ AND
 - 测试问题集；
 - 用户访谈材料；
 - 实验记录；
-- 阶段性报告。
+- 研究过程材料。
 
 ---
 
@@ -307,7 +307,7 @@ AND
 - 创新点总结；
 - 毕业答辩 PPT；
 - 答辩演讲稿；
-- 答辩问题预测。
+- 答辩材料整理。
 
 注意：
 
@@ -649,8 +649,74 @@ source .venv/bin/activate  # Windows 使用 .venv\Scripts\activate
 
 pip install -r requirements.txt
 
+# 先执行数据库迁移
+python -m alembic -c alembic.ini upgrade head
+
 uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 ```
+
+迁移相关常用命令：
+
+```bash
+# 查看当前迁移头
+python -m alembic -c alembic.ini heads
+
+# 查看当前数据库版本
+python -m alembic -c alembic.ini current
+
+# 升级到最新版本
+python -m alembic -c alembic.ini upgrade head
+
+# 创建新的迁移文件（修改模型后执行）
+python -m alembic -c alembic.ini revision -m "add_xxx"
+```
+
+说明：
+
+- 当前项目处于迁移体系过渡期，默认保留 `RUNTIME_SCHEMA_BOOTSTRAP=true`。
+- 该开关开启时，应用启动仍会执行最小运行时兜底：`create_all + schema_compat + 向量表初始化`。
+- 新环境推荐先运行 Alembic 迁移，再启动后端。
+
+新增字段 / 新表的推荐流程：
+
+```text
+1. 先修改 SQLAlchemy 模型
+2. 创建新的 Alembic revision
+3. 在迁移文件里显式写 upgrade / downgrade
+4. 本地执行 alembic upgrade head
+5. 再启动后端和跑测试
+```
+
+建议命令顺序：
+
+```bash
+cd backend
+
+# 1. 修改 app/models 下的模型
+
+# 2. 创建迁移文件
+python -m alembic -c alembic.ini revision -m "describe_change"
+
+# 3. 编辑 backend/alembic/versions/ 下的新迁移文件
+
+# 4. 升级本地数据库
+python -m alembic -c alembic.ini upgrade head
+
+# 5. 检查当前版本
+python -m alembic -c alembic.ini current
+```
+
+过渡期规则：
+
+1. `RUNTIME_SCHEMA_BOOTSTRAP` 只用于旧环境兜底，不应替代正式迁移
+2. 新增表或新增字段后，不要只改模型而不写迁移
+3. `schema_compat` 只处理历史兼容补列，不再作为常规开发入口
+
+何时使用 `stamp`：
+
+1. 仅当现有数据库结构已经与某个基线迁移一致，但数据库里还没有 `alembic_version`
+2. `stamp` 只写版本号，不执行建表 SQL
+3. 不要把 `stamp` 当作日常升级方式
 
 后端接口地址：
 

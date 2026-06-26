@@ -9,6 +9,16 @@ import TopicResearchPanel from "@/components/TopicResearchPanel";
 import ChatMessages from "@/components/chat/ChatMessages";
 import ChatInput from "@/components/chat/ChatInput";
 import { deleteConversation, getConversation, listConversations, sendMessageStream } from "@/lib/chatApi";
+import { buildAuthorityBadgeItems } from "@/lib/authorityBadges.mjs";
+import {
+  buildPaperExplanation,
+  buildPaperCompactReasons,
+  buildSearchHistoryStatusHint,
+  buildSourceStatusSections,
+  sourceLabel,
+  sourceStatusClass,
+  sourceStatusText,
+} from "@/lib/searchExplain.mjs";
 import type {
   ChatMessage,
   Conversation,
@@ -18,6 +28,7 @@ import type {
   Paper,
   Project,
   ResearchDirection,
+  SearchDiagnostics,
   ResearchMode,
   SearchEvidenceBundle,
   SearchSummary,
@@ -43,17 +54,6 @@ const SCOPE_OPTIONS: { value: LibraryScope; label: string }[] = [
   { value: "en", label: "英文" },
 ];
 
-const SOURCE_LABEL: Record<string, string> = {
-  cnki: "知网",
-  cqvip: "维普",
-  pubscholar: "PubScholar",
-  pubmed: "PubMed",
-  openalex: "OpenAlex",
-  semantic_scholar: "Semantic Scholar",
-  crossref: "Crossref",
-  arxiv: "arXiv",
-};
-
 const QUALITY_SOURCE_OPTIONS = [
   { value: "pubmed", label: "PubMed", kind: "真实来源" },
   { value: "pubscholar", label: "PubScholar", kind: "真实来源" },
@@ -74,28 +74,20 @@ const QUALITY_TAG_OPTIONS = [
   { value: "cas", label: "中科院分区", verification: "需授权目录" },
 ] as const;
 
-const AUTHORITY_LABEL: Record<string, string> = {
-  ieee: "IEEE",
-  acm: "ACM",
-  ei: "EI",
-  jcr: "JCR",
-  cas: "中科院分区",
-  pku_core: "北大核心",
-};
-
 type SearchHistoryItem = {
   id: string;
   query: string;
   mode: ResearchMode;
   scope: LibraryScope;
   filters?: LiteratureQualityFilters;
-  snapshot?: {
-    papers: Paper[];
-    sourceStatuses: Record<string, SourceStatusInfo>;
-    searchSummary: SearchSummary | null;
-    currentTaskId: string | null;
-    topicResearch?: TopicResearchSnapshot | null;
-  };
+    snapshot?: {
+      papers: Paper[];
+      sourceStatuses: Record<string, SourceStatusInfo>;
+      searchSummary: SearchSummary | null;
+      searchDiagnostics: SearchDiagnostics | null;
+      currentTaskId: string | null;
+      topicResearch?: TopicResearchSnapshot | null;
+    };
   created_at: string;
 };
 
@@ -117,6 +109,7 @@ export default function HomeSearchLanding() {
   const [papers, setPapers] = useState<Paper[]>([]);
   const [sourceStatuses, setSourceStatuses] = useState<Record<string, SourceStatusInfo>>({});
   const [searchSummary, setSearchSummary] = useState<SearchSummary | null>(null);
+  const [searchDiagnostics, setSearchDiagnostics] = useState<SearchDiagnostics | null>(null);
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [filters, setFilters] = useState<LiteratureQualityFilters>({ ...DEFAULT_FILTERS });
   const [currentTaskId, setCurrentTaskId] = useState<string | null>(null);
@@ -461,12 +454,14 @@ export default function HomeSearchLanding() {
       setPapers(result.papers ?? []);
       setSourceStatuses(result.source_statuses ?? {});
       setSearchSummary(result.search_summary ?? null);
+      setSearchDiagnostics(result.search_diagnostics ?? null);
       setCurrentTaskId(result.task_id ?? null);
       setTopicResearchSnapshot(null);
       rememberSearchHistory(trimmed, nextMode, nextScope, filters, {
         papers: result.papers ?? [],
         sourceStatuses: result.source_statuses ?? {},
         searchSummary: result.search_summary ?? null,
+        searchDiagnostics: result.search_diagnostics ?? null,
         currentTaskId: result.task_id ?? null,
         topicResearch: null,
       });
@@ -474,6 +469,7 @@ export default function HomeSearchLanding() {
       setPapers([]);
       setSourceStatuses({});
       setSearchSummary(null);
+      setSearchDiagnostics(null);
       setCurrentTaskId(null);
       setTopicResearchSnapshot(null);
       setError(err instanceof Error ? err.message : "检索失败，请稍后重试");
@@ -490,6 +486,7 @@ export default function HomeSearchLanding() {
     setPapers([]);
     setSourceStatuses({});
     setSearchSummary(null);
+    setSearchDiagnostics(null);
     setCurrentTaskId(null);
     setTopicResearchSnapshot(null);
     setError(null);
@@ -519,6 +516,7 @@ export default function HomeSearchLanding() {
       setPapers(item.snapshot.papers);
       setSourceStatuses(item.snapshot.sourceStatuses);
       setSearchSummary(item.snapshot.searchSummary);
+      setSearchDiagnostics(item.snapshot.searchDiagnostics ?? null);
       setCurrentTaskId(item.snapshot.currentTaskId);
       setTopicResearchSnapshot(item.snapshot.topicResearch ?? null);
       setSavedDirectionTitles([]);
@@ -567,6 +565,7 @@ export default function HomeSearchLanding() {
             papers,
             sourceStatuses,
             searchSummary,
+            searchDiagnostics,
             currentTaskId,
             topicResearch: previousSnapshot?.topicResearch ?? topicResearchSnapshot ?? null,
           },
@@ -575,7 +574,7 @@ export default function HomeSearchLanding() {
       window.localStorage.setItem(SEARCH_HISTORY_STORAGE_KEY, JSON.stringify(nextItems));
       return nextItems;
     });
-  }, [activeQuery, currentTaskId, mode, papers, scope, searchSummary, sourceStatuses, topicResearchSnapshot]);
+  }, [activeQuery, currentTaskId, mode, papers, scope, searchDiagnostics, searchSummary, sourceStatuses, topicResearchSnapshot]);
 
   const handleSavePaper = async (paper: Paper) => {
     if (!user) {
@@ -696,6 +695,7 @@ export default function HomeSearchLanding() {
               sourceSummary={sourceSummary}
               sourceStatuses={sourceStatuses}
               searchSummary={searchSummary}
+              searchDiagnostics={searchDiagnostics}
               workspaceView={workspaceView}
               messages={messages}
               streamingContent={streamingContent}
@@ -740,6 +740,7 @@ export default function HomeSearchLanding() {
             query={activeQuery}
             papers={papers}
             sourceStatuses={sourceStatuses}
+            searchDiagnostics={searchDiagnostics}
             taskId={currentTaskId}
             projects={projects}
             selectedProjectId={selectedProjectId}
@@ -883,6 +884,11 @@ function SlimSidebar({
                     <span className="mt-1 block text-[11px] font-semibold text-[#8a949e]">
                       {formatConversationDate(item.created_at)} · {scopeLabel(item.scope)} · {modeLabel(item.mode)}
                     </span>
+                    {item.snapshot ? (
+                      <span className="mt-1 block text-[11px] text-[#7b8390]">
+                        {buildSearchHistoryStatusHint(item.snapshot.sourceStatuses)}
+                      </span>
+                    ) : null}
                   </span>
                 </button>
               ))}
@@ -1114,6 +1120,7 @@ function ResultWorkspace({
   sourceSummary,
   sourceStatuses,
   searchSummary,
+  searchDiagnostics,
   workspaceView,
   messages,
   streamingContent,
@@ -1156,6 +1163,7 @@ function ResultWorkspace({
   sourceSummary: string;
   sourceStatuses: Record<string, SourceStatusInfo>;
   searchSummary: SearchSummary | null;
+  searchDiagnostics: SearchDiagnostics | null;
   workspaceView: "topic" | "chat";
   messages: ChatMessage[];
   streamingContent: string;
@@ -1253,6 +1261,7 @@ function ResultWorkspace({
               sourceSummary={sourceSummary}
               sourceStatuses={sourceStatuses}
               searchSummary={searchSummary}
+              searchDiagnostics={searchDiagnostics}
               referencesOpen={referencesOpen}
             onOpenReferences={onOpenReferences}
             savingDirectionTitle={savingDirectionTitle}
@@ -1304,6 +1313,7 @@ function ResearchAnswer({
   sourceSummary,
   sourceStatuses,
   searchSummary,
+  searchDiagnostics,
   referencesOpen,
   onOpenReferences,
 }: {
@@ -1314,6 +1324,7 @@ function ResearchAnswer({
   sourceSummary: string;
   sourceStatuses: Record<string, SourceStatusInfo>;
   searchSummary: SearchSummary | null;
+  searchDiagnostics: SearchDiagnostics | null;
   referencesOpen: boolean;
   onOpenReferences: () => void;
 }) {
@@ -1464,6 +1475,7 @@ function ReferencesPanel({
   query,
   papers,
   sourceStatuses,
+  searchDiagnostics,
   taskId,
   projects,
   selectedProjectId,
@@ -1479,6 +1491,7 @@ function ReferencesPanel({
   query: string;
   papers: Paper[];
   sourceStatuses: Record<string, SourceStatusInfo>;
+  searchDiagnostics: SearchDiagnostics | null;
   taskId: string | null;
   projects: Project[];
   selectedProjectId: string;
@@ -1492,6 +1505,7 @@ function ReferencesPanel({
   onClose: () => void;
 }) {
   const [expandedIndex, setExpandedIndex] = useState<number | null>(0);
+  const sourceSections = buildSourceStatusSections(sourceStatuses);
 
   return (
     <aside className="hidden h-screen min-h-0 border-l border-[#dfe3e7] bg-white lg:flex lg:flex-col">
@@ -1532,6 +1546,14 @@ function ReferencesPanel({
               )}
             </div>
             <SourceStatusStrip statuses={sourceStatuses} />
+            {(sourceSections.items.length || searchDiagnostics?.overview) ? (
+              <div className="mt-4 rounded-2xl border border-[#e5eaef] bg-[#fafbfd] px-4 py-3">
+                <p className="text-[11px] font-black uppercase tracking-[0.16em] text-[#7b8390]">Source Health</p>
+                <p className="mt-2 text-xs leading-6 text-[#5e6874]">
+                  {searchDiagnostics?.overview || sourceSections.summary}
+                </p>
+              </div>
+            ) : null}
           </div>
           <button
             type="button"
@@ -1624,6 +1646,9 @@ function ReferenceCard({
   onSave: () => void;
   onToggle: () => void;
 }) {
+  const explanation = buildPaperExplanation(paper);
+  const compactReasons = buildPaperCompactReasons(paper);
+
   return (
     <article className="border-b border-[#e1e4e8] py-6">
       <button type="button" onClick={onToggle} className="flex w-full gap-4 text-left">
@@ -1633,8 +1658,8 @@ function ReferenceCard({
         <div className="min-w-0">
           <h3 className="text-[17px] font-black leading-7 tracking-[-0.01em] text-[#20242a]">{paper.title}</h3>
           <p className={`mt-4 text-sm leading-6 text-[#343c45] ${expanded ? "" : "line-clamp-3"}`}>
-            <span className="mr-2 text-xs font-black uppercase tracking-[0.16em] text-[#7b8390]">Key takeaway</span>
-            {paper.why_selected || paper.abstract || "暂无摘要，建议打开来源链接核验。"}
+            <span className="mr-2 text-xs font-black uppercase tracking-[0.16em] text-[#7b8390]">命中原因</span>
+            {explanation.hitExplanation}
           </p>
           <div className="mt-4 flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-[#6a727d]">
             <span className="font-black text-[#20242a]">{paper.year || "未知年份"}</span>
@@ -1645,11 +1670,41 @@ function ReferenceCard({
           </div>
           <p className="mt-1 text-sm italic text-[#7b8390]">{paper.venue || sourceLabel(paper.source)}</p>
           <AuthorityBadges paper={paper} />
+          <div className="mt-3 flex flex-wrap gap-2">
+            {compactReasons.map((reason) => (
+              <span
+                key={reason}
+                className="rounded-full border border-[#dfe5ea] bg-[#f7f8f9] px-2.5 py-1 text-[11px] font-semibold text-[#4d5966]"
+              >
+                {reason}
+              </span>
+            ))}
+          </div>
         </div>
       </button>
 
       {expanded ? (
         <div className="ml-12 mt-4 rounded-2xl bg-[#f7f8f9] p-4 text-sm leading-7 text-[#3b444e]">
+          <div className="rounded-2xl border border-[#dfe5ea] bg-white px-4 py-3">
+            <p className="text-[11px] font-black uppercase tracking-[0.16em] text-[#7b8390]">命中原因</p>
+            <p className="mt-2 text-sm leading-7 text-[#2d3640]">{explanation.hitExplanation}</p>
+          </div>
+          <div className="mt-3 rounded-2xl border border-[#dfe5ea] bg-white px-4 py-3">
+            <p className="text-[11px] font-black uppercase tracking-[0.16em] text-[#7b8390]">参考原因</p>
+            <ul className="mt-2 space-y-1.5 text-sm leading-6 text-[#3b444e]">
+              {explanation.recommendationHints.map((item, index) => (
+                <li key={`${item}-${index}`}>• {item}</li>
+              ))}
+            </ul>
+          </div>
+          <div className="mt-3 rounded-2xl border border-[#dfe5ea] bg-white px-4 py-3">
+            <p className="text-[11px] font-black uppercase tracking-[0.16em] text-[#7b8390]">核验说明</p>
+            <ul className="mt-2 space-y-1.5 text-sm leading-6 text-[#3b444e]">
+              {explanation.verificationNotes.map((item, index) => (
+                <li key={`${item}-${index}`}>• {item}</li>
+              ))}
+            </ul>
+          </div>
           <p>
             <span className="font-bold text-[#20242a]">来源：</span>
             {sourceLabel(paper.source)}
@@ -1662,16 +1717,6 @@ function ReferenceCard({
             <span className="font-bold text-[#20242a]">语言：</span>
             {paper.language === "cn" ? "中文" : paper.language === "en" ? "英文" : "未知"}
           </p>
-          {paper.authority_reasons?.length ? (
-            <div className="mt-2">
-              <span className="font-bold text-[#20242a]">权威筛选依据：</span>
-              <ul className="mt-1 space-y-1">
-                {paper.authority_reasons.map((reason, reasonIndex) => (
-                  <li key={`${reason}-${reasonIndex}`}>{reason}</li>
-                ))}
-              </ul>
-            </div>
-          ) : null}
           {paper.url ? (
             <a
               href={paper.url}
@@ -1697,20 +1742,21 @@ function ReferenceCard({
 }
 
 function AuthorityBadges({ paper }: { paper: Paper }) {
-  const verified = paper.authority_tags || [];
-  const pending = paper.pending_authority_tags || [];
-  if (!verified.length && !pending.length) return null;
+  const items = buildAuthorityBadgeItems(paper);
+  if (!items.length) return null;
 
   return (
     <div className="mt-3 flex flex-wrap gap-2">
-      {verified.map((tag) => (
-        <span key={`verified-${tag}`} className="rounded-full border border-[#bfe5d1] bg-[#eefaf3] px-2.5 py-1 text-[11px] font-black text-[#16613a]">
-          已核验 · {authorityLabel(tag)}
-        </span>
-      ))}
-      {pending.map((tag) => (
-        <span key={`pending-${tag}`} className="rounded-full border border-[#f1d49b] bg-[#fff7e8] px-2.5 py-1 text-[11px] font-black text-[#8a5a00]">
-          待核验 · {authorityLabel(tag)}
+      {items.map((item) => (
+        <span
+          key={item.key}
+          className={`rounded-full px-2.5 py-1 text-[11px] font-black ${
+            item.tone === "verified"
+              ? "border border-[#bfe5d1] bg-[#eefaf3] text-[#16613a]"
+              : "border border-[#f1d49b] bg-[#fff7e8] text-[#8a5a00]"
+          }`}
+        >
+          {item.label}
         </span>
       ))}
     </div>
@@ -1961,31 +2007,6 @@ function summarizeSources(papers: Paper[]) {
     .map(([source, count]) => `${sourceLabel(source)} ${count}`)
     .join(" · ");
   return summary || "暂无来源统计";
-}
-
-function sourceLabel(source: string) {
-  return SOURCE_LABEL[source] ?? source;
-}
-
-function authorityLabel(tag: string) {
-  return AUTHORITY_LABEL[tag] ?? tag;
-}
-
-function sourceStatusText(info: SourceStatusInfo) {
-  if (info.status === "ok") return `已返回 ${info.count} 条`;
-  if (info.status === "rate_limited") return "当前限流";
-  if (info.status === "gateway_timeout") return "服务超时";
-  if (info.status === "blocked") return "访问受限";
-  if (info.status === "no_results") return "暂无结果";
-  if (info.status === "error" || info.status === "http_error") return "请求失败";
-  return info.count > 0 ? `已返回 ${info.count} 条` : "状态未知";
-}
-
-function sourceStatusClass(status: string) {
-  if (status === "ok") return "border-[#bfe5d1] bg-[#eefaf3] text-[#16613a]";
-  if (status === "rate_limited" || status === "gateway_timeout") return "border-[#f1d49b] bg-[#fff7e8] text-[#8a5a00]";
-  if (status === "blocked" || status === "error" || status === "http_error") return "border-[#f0b9b9] bg-[#fff0f0] text-[#9a2f2f]";
-  return "border-[#dfe4e8] bg-[#f6f8fa] text-[#5e6874]";
 }
 
 function formatAuthors(authors: string[] | null | undefined) {

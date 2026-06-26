@@ -92,7 +92,7 @@ def generate_defense_ppt(
             download_url=f"/api/defense/ppt/download/{object_key}",
             style_id=style["id"],
             style_name=style["name"],
-            slide_count=15,
+            slide_count=14,
             has_real_data=has_real_data,
         )
     except Exception as e:

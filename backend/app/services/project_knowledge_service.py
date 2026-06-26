@@ -8,7 +8,14 @@ from sqlalchemy.orm import Session
 from ..models.outcome import Outcome
 from ..models.project_document_chunk import ProjectDocumentChunk
 from ..schemas.project_document import OutcomeKnowledgeStatus
-from .document_parse_service import DocumentParseError, UnsupportedDocumentType, chunk_text, extract_text_from_bytes
+from .document_parse_service import (
+    DocumentParseError,
+    ParsedDocument,
+    UnsupportedDocumentType,
+    chunk_document,
+    chunk_text as split_text,
+    extract_text_from_bytes,
+)
 from .upload_service import get_object_stream
 
 
@@ -32,6 +39,10 @@ def get_outcome_knowledge_status(outcome: Outcome) -> OutcomeKnowledgeStatus:
         message=_status_message(status, count),
         error=error,
         indexed_at=parsed_indexed_at,
+        parser=extra.get("knowledge_parser"),
+        strategy_chain=extra.get("knowledge_strategy_chain") or [],
+        used_ocr=bool(extra.get("knowledge_used_ocr")),
+        error_stage=extra.get("knowledge_error_stage"),
     )
 
 
@@ -55,7 +66,7 @@ def index_outcome_document(db: Session, outcome: Outcome) -> OutcomeKnowledgeSta
     try:
         _set_status(db, outcome, "parsing", 0, None, commit=False)
         parsed = extract_text_from_bytes(data, outcome.file_path)
-        chunks = chunk_text(parsed.text)
+        chunks = chunk_text(parsed)
         if not chunks:
             return _set_status(db, outcome, "failed", 0, "未提取到可入库文本。")
 
@@ -72,11 +83,18 @@ def index_outcome_document(db: Session, outcome: Outcome) -> OutcomeKnowledgeSta
                 source_filename=filename,
                 source_type=parsed.source_type,
                 token_estimate=len(chunk.content),
-                meta=parsed.meta,
+                meta={**(parsed.meta or {}), **(chunk.meta or {})},
             ))
-        return _set_status(db, outcome, "indexed", len(chunks), None)
+        return _set_status(db, outcome, "indexed", len(chunks), None, parse_meta=parsed.meta)
     except (UnsupportedDocumentType, DocumentParseError) as exc:
-        return _set_status(db, outcome, "failed", 0, str(exc))
+        return _set_status(
+            db,
+            outcome,
+            "failed",
+            0,
+            str(exc),
+            error_stage=getattr(exc, "parse_stage", None),
+        )
     except Exception as exc:
         db.rollback()
         return _set_status(db, outcome, "failed", 0, f"解析入库失败：{exc}")
@@ -88,6 +106,13 @@ def _delete_existing_chunks(db: Session, outcome: Outcome) -> None:
         db.delete(chunk)
 
 
+def chunk_text(parsed: ParsedDocument | str):
+    """兼容旧调用：既支持 ParsedDocument，也支持纯文本切块。"""
+    if isinstance(parsed, ParsedDocument):
+        return chunk_document(parsed)
+    return split_text(parsed)
+
+
 def _set_status(
     db: Session,
     outcome: Outcome,
@@ -96,11 +121,23 @@ def _set_status(
     error: str | None,
     *,
     commit: bool = True,
+    parse_meta: dict | None = None,
+    error_stage: str | None = None,
 ) -> OutcomeKnowledgeStatus:
     extra = dict(outcome.extra_data or {})
     extra["knowledge_status"] = status
     extra["knowledge_chunk_count"] = count
     extra["knowledge_error"] = error
+    if error_stage:
+        extra["knowledge_error_stage"] = error_stage
+    if parse_meta:
+        extra["knowledge_parser"] = parse_meta.get("parser")
+        extra["knowledge_strategy_chain"] = parse_meta.get("strategy_chain") or []
+        extra["knowledge_used_ocr"] = bool(parse_meta.get("used_ocr") or ("ocr" in (parse_meta.get("strategy_chain") or [])))
+        extra["document_kind"] = parse_meta.get("document_kind")
+        extra["structured_fields"] = parse_meta.get("structured_fields") or []
+        extra["structured_content"] = parse_meta.get("structured_content") or {}
+        extra["structured_confidence"] = parse_meta.get("structured_confidence") or {}
     if status == "indexed":
         extra["knowledge_indexed_at"] = datetime.utcnow().isoformat()
     outcome.extra_data = extra

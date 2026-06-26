@@ -1,7 +1,7 @@
 /** 论文写作页：提供章节目录、正文编辑区和 AI 建议面板。 */
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { forwardRef, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import ChatSidebar from "@/components/chat/ChatSidebar";
 import WorkbenchSettingsPanel from "@/components/chat/WorkbenchSettingsPanel";
@@ -10,9 +10,9 @@ import {
   createDraft,
   generateAbstract,
   generateChapter,
-  getDefenseOutline,
   getDraft,
   getDraftDownloadUrl,
+  getProjectWorkspace,
   listOutcomes,
   listDrafts,
   listProjectDesigns,
@@ -24,11 +24,12 @@ import type {
   AbstractResult,
   ChatMessage,
   ComplianceResult,
-  DefensePPTOutline,
   Draft,
   Outcome,
   PersistedProjectDesign,
   Project,
+  ProjectWorkspaceLinkedOutcome,
+  ProjectWorkspaceSnapshot,
 } from "@/lib/types";
 import { CHAT_THEME } from "@/components/chat/chatTheme";
 import {
@@ -37,6 +38,8 @@ import {
   getDraftCompletionSummary,
   getDraftReferences,
 } from "@/lib/draftKnowledge";
+import { findChapterKnowledge, getChapterKnowledgeActions } from "@/lib/projectKnowledge.mjs";
+import { buildDocumentReferenceItems, stripInlineReferenceSection } from "@/lib/writingReferences.mjs";
 
 const CHAPTER_KEYS = [
   "chapter_1_introduction",
@@ -65,8 +68,14 @@ type DesignContent = {
 };
 
 type RightPanelTab = "suggestions" | "references" | "delivery";
-type PageZoom = 90 | 100 | 110;
-type PageWidthMode = "standard" | "wide";
+type ChapterKnowledgeActionItem = {
+  key: string;
+  title: string;
+  subtitle: string;
+  href: string;
+  actionLabel: string;
+  external: boolean;
+};
 
 export default function WritingPage() {
   const router = useRouter();
@@ -74,11 +83,14 @@ export default function WritingPage() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [projects, setProjects] = useState<Project[]>([]);
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
+  const [preselectedProjectId, setPreselectedProjectId] = useState<string | null>(null);
+  const [preselectedDraftId, setPreselectedDraftId] = useState<string | null>(null);
+  const [preselectedChapterKey, setPreselectedChapterKey] = useState<string | null>(null);
   const [designs, setDesigns] = useState<PersistedProjectDesign[]>([]);
   const [drafts, setDrafts] = useState<Draft[]>([]);
   const [activeDraft, setActiveDraft] = useState<Draft | null>(null);
   const [activeChapterKey, setActiveChapterKey] = useState(CHAPTER_KEYS[0]);
-  const [editorContent, setEditorContent] = useState("");
+  const [editorContents, setEditorContents] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
   const [draftLoading, setDraftLoading] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -87,12 +99,20 @@ export default function WritingPage() {
   const [abstractResult, setAbstractResult] = useState<AbstractResult | null>(null);
   const [complianceResult, setComplianceResult] = useState<ComplianceResult | null>(null);
   const [outcomes, setOutcomes] = useState<Outcome[]>([]);
-  const [defenseOutline, setDefenseOutline] = useState<DefensePPTOutline | null>(null);
+  const [workspaceSnapshot, setWorkspaceSnapshot] = useState<ProjectWorkspaceSnapshot | null>(null);
   const [rightTab, setRightTab] = useState<RightPanelTab>("suggestions");
-  const [pageZoom, setPageZoom] = useState<PageZoom>(100);
-  const [pageWidthMode, setPageWidthMode] = useState<PageWidthMode>("standard");
+  const [inspectorOpen, setInspectorOpen] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const chapterTextareaRefs = useRef<Record<string, HTMLTextAreaElement | null>>({});
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const params = new URLSearchParams(window.location.search);
+    setPreselectedProjectId(params.get("project_id"));
+    setPreselectedDraftId(params.get("draft_id"));
+    setPreselectedChapterKey(params.get("chapter_key"));
+  }, []);
 
   useEffect(() => {
     if (authLoading) return;
@@ -105,11 +125,15 @@ export default function WritingPage() {
     listProjects()
       .then((items) => {
         setProjects(items);
-        setSelectedProjectId((current) => current ?? items[0]?.id ?? null);
+        setSelectedProjectId((current) => {
+          if (current) return current;
+          if (preselectedProjectId && items.some((item) => item.id === preselectedProjectId)) return preselectedProjectId;
+          return items[0]?.id ?? null;
+        });
       })
       .catch(() => setProjects([]))
       .finally(() => setLoading(false));
-  }, [authLoading, user]);
+  }, [authLoading, preselectedProjectId, user]);
 
   useEffect(() => {
     if (!selectedProjectId) {
@@ -124,8 +148,18 @@ export default function WritingPage() {
       .then(async ([draftItems, designItems]) => {
         setDrafts(draftItems);
         setDesigns(designItems);
-        const firstDraft = draftItems[0] ?? null;
-        setActiveDraft(firstDraft ? await getDraft(firstDraft.id) : null);
+        const targetDraftId = preselectedDraftId && draftItems.some((draft) => draft.id === preselectedDraftId)
+          ? preselectedDraftId
+          : draftItems[0]?.id ?? null;
+        if (!targetDraftId) {
+          setActiveDraft(null);
+          return;
+        }
+        const draft = await getDraft(targetDraftId);
+        setActiveDraft(draft);
+        setActiveChapterKey(preselectedChapterKey && CHAPTER_KEYS.includes(preselectedChapterKey)
+          ? preselectedChapterKey
+          : draft.sections[0]?.key || CHAPTER_KEYS[0]);
       })
       .catch(() => {
         setDrafts([]);
@@ -133,11 +167,12 @@ export default function WritingPage() {
         setActiveDraft(null);
       })
       .finally(() => setDraftLoading(false));
-  }, [selectedProjectId]);
+  }, [preselectedChapterKey, preselectedDraftId, selectedProjectId]);
 
   useEffect(() => {
     if (!selectedProjectId) {
       setOutcomes([]);
+      setWorkspaceSnapshot(null);
       return;
     }
     listOutcomes({ project_id: selectedProjectId })
@@ -145,25 +180,32 @@ export default function WritingPage() {
       .catch(() => setOutcomes([]));
   }, [selectedProjectId]);
 
+  const refreshWorkspaceSnapshot = useCallback(async (projectId: string, draftId?: string | null) => {
+    try {
+      const snapshot = await getProjectWorkspace(projectId, draftId ?? null);
+      setWorkspaceSnapshot(snapshot);
+    } catch {
+      setWorkspaceSnapshot(null);
+    }
+  }, []);
+
   useEffect(() => {
     if (!activeDraft) {
-      setEditorContent("");
+      setEditorContents({});
       return;
     }
-
-    const section = getSection(activeDraft, activeChapterKey);
-    setEditorContent(section?.content || "");
-  }, [activeDraft, activeChapterKey]);
+    const nextContents: Record<string, string> = {};
+    for (const key of CHAPTER_KEYS) {
+      const section = getSection(activeDraft, key);
+      nextContents[key] = section?.content || "";
+    }
+    setEditorContents(nextContents);
+  }, [activeDraft]);
 
   useEffect(() => {
-    if (!activeDraft) {
-      setDefenseOutline(null);
-      return;
-    }
-    getDefenseOutline(activeDraft.id)
-      .then(setDefenseOutline)
-      .catch(() => setDefenseOutline(null));
-  }, [activeDraft?.id]);
+    if (!selectedProjectId) return;
+    void refreshWorkspaceSnapshot(selectedProjectId, activeDraft?.id);
+  }, [activeDraft?.id, refreshWorkspaceSnapshot, selectedProjectId]);
 
   const selectedProject = useMemo(
     () => projects.find((project) => project.id === selectedProjectId) ?? null,
@@ -174,38 +216,54 @@ export default function WritingPage() {
   const designContent = (latestDesign?.content ?? null) as DesignContent | null;
   const activeSection = activeDraft ? getSection(activeDraft, activeChapterKey) : null;
   const activeChapterRecord = getDraftChapterRecord(activeDraft, activeChapterKey);
-  const wordCount = editorContent.replace(/\s+/g, "").length;
-  const { completedCount, progress } = getDraftCompletionSummary(activeDraft, CHAPTER_KEYS);
+  const activeChapterContent = editorContents[activeChapterKey] || "";
+  const documentReferences = useMemo(
+    () => buildDocumentReferenceItems(getDraftReferences(activeDraft)),
+    [activeDraft],
+  );
+  const totalWordCount = useMemo(
+    () => CHAPTER_KEYS.reduce((sum, key) => sum + (editorContents[key] || "").replace(/\s+/g, "").length, 0),
+    [editorContents],
+  );
+  const { progress } = getDraftCompletionSummary(activeDraft, CHAPTER_KEYS);
   const currentTitle = activeSection?.title || FALLBACK_CHAPTERS[activeChapterKey] || "章节";
-  const isDirty = activeSection ? editorContent !== activeSection.content : Boolean(editorContent);
+  const isDirty = useMemo(() => {
+    if (!activeDraft) {
+      return CHAPTER_KEYS.some((key) => Boolean(editorContents[key]));
+    }
+    return CHAPTER_KEYS.some((key) => {
+      const section = getSection(activeDraft, key);
+      return (editorContents[key] || "") !== (section?.content || "");
+    });
+  }, [activeDraft, editorContents]);
   const designReferences = designContent?.references || [];
   const draftReferences = getDraftReferences(activeDraft);
   const references = [...designReferences, ...draftReferences].filter(Boolean);
-  const hasDesign = Boolean(latestDesign);
   const hasOutcomes = outcomes.length > 0;
-  const hasReferences = references.length > 0;
   const isResultSensitiveChapter = ["chapter_4_implementation", "chapter_5_experiment"].includes(activeChapterKey);
   const chapterSuggestions = getChapterSuggestions(activeChapterKey, hasOutcomes);
-  const evidenceReadyCount = [hasDesign, hasOutcomes, hasReferences].filter(Boolean).length;
   const saveStateLabel = saving ? "保存中" : isDirty ? "未保存" : "已同步";
-  const pageMaxWidth = pageWidthMode === "wide" ? 940 : 820;
-  const workspaceMaxWidth = pageWidthMode === "wide" ? 1020 : 900;
-  const evidenceBadges = [
-    { label: hasDesign ? "有项目设计" : "缺项目设计", tone: hasDesign ? "good" : "warn" },
-    { label: hasOutcomes ? "有成果材料" : "缺成果材料", tone: hasOutcomes ? "good" : "warn" },
-    { label: hasReferences ? "有引用依据" : "缺引用依据", tone: hasReferences ? "good" : "warn" },
-    ...(isResultSensitiveChapter ? [{ label: activeChapterRecord?.data_based ? "当前章节含真实结果标记" : "结果章节需真实数据", tone: "warn" }] : []),
-  ] as { label: string; tone: "good" | "warn" }[];
   const chapterCitations = activeChapterRecord?.citations || [];
   const chapterNoteMatches = paperNotesForChapter(activeChapterKey, references, draftReferences);
+  const activeChapterKnowledge = findChapterKnowledge(workspaceSnapshot, activeChapterKey);
+  const chapterKnowledgeActions = getChapterKnowledgeActions(activeChapterKnowledge, {
+    projectId: selectedProjectId,
+    chapterKey: activeChapterKey,
+  });
+  const activeChapterIndex = CHAPTER_KEYS.indexOf(activeChapterKey);
+  const previousChapterKey = activeChapterIndex > 0 ? CHAPTER_KEYS[activeChapterIndex - 1] : null;
+  const nextChapterKey = activeChapterIndex >= 0 && activeChapterIndex < CHAPTER_KEYS.length - 1
+    ? CHAPTER_KEYS[activeChapterIndex + 1]
+    : null;
 
-  const loadDraftById = useCallback(async (draftId: string) => {
+  const loadDraftById = useCallback(async (draftId: string, chapterKey?: string | null) => {
     setDraftLoading(true);
     setError(null);
     try {
       const draft = await getDraft(draftId);
       setActiveDraft(draft);
-      setActiveChapterKey(draft.sections[0]?.key || CHAPTER_KEYS[0]);
+      const nextChapterKey = chapterKey && CHAPTER_KEYS.includes(chapterKey) ? chapterKey : draft.sections[0]?.key || CHAPTER_KEYS[0];
+      setActiveChapterKey(nextChapterKey);
     } catch (err) {
       setError(err instanceof Error ? err.message : "草稿加载失败");
     } finally {
@@ -244,16 +302,20 @@ export default function WritingPage() {
     setError(null);
     try {
       const content = { ...(activeDraft.content || {}) };
-      content[activeChapterKey] = buildEditedChapterPayload(content[activeChapterKey], currentTitle, editorContent);
+      for (const key of CHAPTER_KEYS) {
+        const title = getSection(activeDraft, key)?.title || FALLBACK_CHAPTERS[key] || "章节";
+        content[key] = buildEditedChapterPayload(content[key], title, stripInlineReferenceSection(editorContents[key] || ""));
+      }
       const updated = await updateDraft(activeDraft.id, { content });
       setActiveDraft(updated);
-      setNotice("已保存当前章节");
+      if (selectedProjectId) await refreshWorkspaceSnapshot(selectedProjectId, updated.id);
+      setNotice("已保存整篇草稿");
     } catch (err) {
       setError(err instanceof Error ? err.message : "保存失败");
     } finally {
       setSaving(false);
     }
-  }, [activeDraft, activeChapterKey, currentTitle, editorContent]);
+  }, [activeDraft, editorContents, refreshWorkspaceSnapshot, selectedProjectId]);
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -273,9 +335,13 @@ export default function WritingPage() {
     setError(null);
     try {
       const result = await generateChapter(activeDraft.id, activeChapterKey);
-      setEditorContent(result.content || "");
+      setEditorContents((current) => ({
+        ...current,
+        [activeChapterKey]: result.content || "",
+      }));
       const updated = await getDraft(activeDraft.id);
       setActiveDraft(updated);
+      if (selectedProjectId) await refreshWorkspaceSnapshot(selectedProjectId, updated.id);
       setNotice("AI 已生成当前章节");
     } catch (err) {
       setError(err instanceof Error ? err.message : "章节生成失败");
@@ -316,12 +382,19 @@ export default function WritingPage() {
 
   const handleCopy = async () => {
     try {
-      await navigator.clipboard?.writeText(editorContent);
+      await navigator.clipboard?.writeText(activeChapterContent);
       setNotice("已复制当前章节");
     } catch {
       setNotice("当前浏览器不支持自动复制");
     }
   };
+
+  const scrollToChapter = useCallback((chapterKey: string) => {
+    setActiveChapterKey(chapterKey);
+    const node = chapterTextareaRefs.current[chapterKey];
+    node?.scrollIntoView({ behavior: "smooth", block: "start" });
+    node?.focus();
+  }, []);
 
   if (authLoading || loading) {
     return <CenteredState title="正在加载论文写作..." description="正在读取项目、草稿和写作上下文。" />;
@@ -350,22 +423,22 @@ export default function WritingPage() {
         searchEntryMode="home"
       />
 
-      <main className="grid min-w-0 flex-1 grid-cols-1 lg:grid-cols-[240px_minmax(0,1fr)] xl:grid-cols-[240px_minmax(0,1fr)_280px] 2xl:grid-cols-[260px_minmax(0,1fr)_280px]">
+      <main className="grid min-w-0 flex-1 grid-cols-1 lg:grid-cols-[220px_minmax(0,1fr)]">
         <aside className="hidden min-h-0 flex-col border-r lg:flex" style={{ background: CHAT_THEME.card, borderColor: CHAT_THEME.border }}>
-          <div className="border-b px-5 py-5" style={{ borderColor: CHAT_THEME.border }}>
-            <h1 className="text-[20px] font-semibold leading-tight" style={{ fontFamily: "var(--font-cormorant), serif" }}>
+          <div className="border-b px-4 py-4" style={{ borderColor: CHAT_THEME.border }}>
+            <h1 className="text-[20px] font-semibold" style={{ fontFamily: "var(--font-cormorant), serif" }}>
               论文写作
             </h1>
-            <p className="mt-2 text-xs leading-5" style={{ color: CHAT_THEME.mid }}>
-              基于项目设计与文献依据生成论文草稿
-            </p>
           </div>
 
           <div className="border-b px-4 py-4" style={{ borderColor: CHAT_THEME.border }}>
+            <div className="mb-2 text-[12px] font-medium" style={{ color: CHAT_THEME.mid }}>
+              项目
+            </div>
             <select
               value={selectedProjectId ?? ""}
               onChange={(event) => setSelectedProjectId(event.target.value || null)}
-              className="h-10 w-full rounded-lg px-3 text-xs outline-none"
+              className="h-10 w-full rounded-xl px-3 text-xs outline-none"
               style={{ background: CHAT_THEME.bg, border: `1px solid ${CHAT_THEME.border}`, color: CHAT_THEME.text }}
             >
               {projects.length === 0 ? (
@@ -378,16 +451,6 @@ export default function WritingPage() {
                 ))
               )}
             </select>
-
-            <div className="mt-4">
-              <div className="mb-1.5 flex justify-between text-[11px]" style={{ color: CHAT_THEME.mid }}>
-                <span>完成进度</span>
-                <span>{progress}%</span>
-              </div>
-              <div className="h-1 overflow-hidden rounded-full" style={{ background: "#d8d0c0" }}>
-                <div className="h-full rounded-full" style={{ width: `${progress}%`, background: CHAT_THEME.primary }} />
-              </div>
-            </div>
           </div>
 
           <div className="border-b px-4 py-4" style={{ borderColor: CHAT_THEME.border }}>
@@ -397,120 +460,116 @@ export default function WritingPage() {
                 type="button"
                 onClick={handleNewDraft}
                 disabled={!selectedProject || draftLoading}
-                className="rounded px-2 py-1 text-[11px] disabled:opacity-40"
-                style={{ background: CHAT_THEME.primary, color: CHAT_THEME.bg }}
+                className="rounded-lg px-2.5 py-1 text-[11px] disabled:opacity-40"
+                style={{ background: CHAT_THEME.primarySoft, color: CHAT_THEME.primary }}
               >
                 新建
               </button>
             </div>
-            {drafts.length === 0 ? (
-              <p className="rounded-lg border border-dashed px-3 py-4 text-center text-xs" style={{ borderColor: CHAT_THEME.border, color: CHAT_THEME.mid }}>
-                暂无草稿
-              </p>
-            ) : (
-              <div className="max-h-28 space-y-1 overflow-y-auto" style={{ scrollbarWidth: "none" }}>
-                {drafts.map((draft) => (
-                  <button
-                    key={draft.id}
-                    type="button"
-                    onClick={() => loadDraftById(draft.id)}
-                    className="w-full rounded-lg px-3 py-2 text-left text-xs transition-colors"
-                    style={{
-                      background: activeDraft?.id === draft.id ? "rgba(24,48,29,0.1)" : "transparent",
-                      color: activeDraft?.id === draft.id ? CHAT_THEME.primary : CHAT_THEME.text,
-                    }}
-                  >
-                    <div className="truncate font-medium">{draft.title}</div>
-                    <div className="mt-0.5 text-[10px]" style={{ color: CHAT_THEME.mid }}>
-                      v{draft.version} · {draft.sections.filter((section) => section.status !== "draft").length}/6 章
-                    </div>
-                  </button>
-                ))}
-              </div>
-            )}
+            <select
+              value={activeDraft?.id ?? ""}
+              onChange={(event) => {
+                if (!event.target.value) return;
+                void loadDraftById(event.target.value);
+              }}
+              disabled={drafts.length === 0 || draftLoading}
+              className="h-10 w-full rounded-xl px-3 text-xs outline-none disabled:opacity-50"
+              style={{ background: CHAT_THEME.bg, border: `1px solid ${CHAT_THEME.border}`, color: CHAT_THEME.text }}
+            >
+              {drafts.length === 0 ? (
+                <option value="">暂无草稿</option>
+              ) : (
+                drafts.map((draft) => (
+                  <option key={draft.id} value={draft.id}>
+                    {draft.title}
+                  </option>
+                ))
+              )}
+            </select>
           </div>
 
           <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4" style={{ scrollbarWidth: "none" }}>
-            <div className="mb-3 text-[12px] font-medium">章节结构</div>
-            {CHAPTER_KEYS.map((key) => {
-              const section = activeDraft ? getSection(activeDraft, key) : null;
-              const active = key === activeChapterKey;
-              const title = section?.title || FALLBACK_CHAPTERS[key];
-              const count = section?.content?.replace(/\s+/g, "").length || 0;
-              return (
-                <button
-                  key={key}
-                  type="button"
-                  onClick={() => setActiveChapterKey(key)}
-                  className="mb-1 flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-[13px]"
-                  style={{
-                    background: active ? "rgba(24,48,29,0.1)" : "transparent",
-                    color: active ? CHAT_THEME.primary : CHAT_THEME.text,
-                  }}
-                >
-                  <span className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: count > 0 ? CHAT_THEME.primary : CHAT_THEME.low }} />
-                  <span className="min-w-0 flex-1 truncate">{title}</span>
-                  <span className="text-[10px]" style={{ color: CHAT_THEME.mid }}>
-                    {count}
-                  </span>
-                </button>
-              );
-            })}
-          </div>
-
-          <div className="border-t px-5 py-4 text-xs" style={{ borderColor: CHAT_THEME.border, color: CHAT_THEME.mid }}>
-            {latestDesign ? "已关联项目设计" : "尚未关联项目设计"}
+            <div className="mb-3 text-[12px] font-medium" style={{ color: CHAT_THEME.mid }}>
+              章节
+            </div>
+            <div className="space-y-2">
+              {CHAPTER_KEYS.map((key, index) => {
+                const section = activeDraft ? getSection(activeDraft, key) : null;
+                const active = key === activeChapterKey;
+                const title = section?.title || FALLBACK_CHAPTERS[key];
+                return (
+                  <button
+                    key={key}
+                    type="button"
+                    onClick={() => scrollToChapter(key)}
+                    className="w-full rounded-xl border px-3 py-3 text-left transition-colors"
+                    style={{
+                      background: active ? "rgba(24,48,29,0.1)" : CHAT_THEME.bg,
+                      color: active ? CHAT_THEME.primary : CHAT_THEME.text,
+                      borderColor: active ? "rgba(24,48,29,0.18)" : CHAT_THEME.border,
+                    }}
+                  >
+                    <div className="text-[12px] font-medium">{index + 1}. {title}</div>
+                    <div className="mt-1 text-[10px]" style={{ color: active ? CHAT_THEME.primary : CHAT_THEME.mid }}>
+                      {formatSectionStatus(section?.status)}
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
           </div>
         </aside>
 
-        <section className="flex min-h-0 flex-col">
-          <header
-            className="grid min-h-16 shrink-0 grid-cols-1 items-center gap-3 border-b px-4 py-3 sm:grid-cols-[minmax(0,1fr)_auto] lg:grid-cols-[minmax(0,1fr)_auto_auto] lg:px-7"
-            style={{ background: CHAT_THEME.card, borderColor: CHAT_THEME.border }}
-          >
-            <div className="min-w-0">
-              <div className="truncate text-sm font-semibold" style={{ color: CHAT_THEME.text }}>
-                {activeDraft?.title || "论文草稿"}
+        <section className="relative flex min-h-0 flex-col">
+          <header className="border-b px-4 py-4 lg:px-6" style={{ background: CHAT_THEME.card, borderColor: CHAT_THEME.border }}>
+            <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+              <div className="min-w-0">
+                <div className="truncate text-[12px]" style={{ color: CHAT_THEME.mid }}>
+                  {selectedProject?.name || "未选择项目"}
+                </div>
+                <h2 className="truncate text-[30px] font-semibold" style={{ fontFamily: "var(--font-cormorant), serif", color: CHAT_THEME.text }}>
+                  {currentTitle}
+                </h2>
               </div>
-              <div className="mt-1 flex min-w-0 items-center gap-2 text-xs" style={{ color: CHAT_THEME.mid }}>
-                <span className="truncate">{currentTitle}</span>
-                <span>·</span>
-                <span>{formatSectionStatus(activeSection?.status)}</span>
+
+              <div className="flex flex-wrap items-center gap-2">
+                <ToolbarButton
+                  label="上一章"
+                  onClick={() => previousChapterKey && scrollToChapter(previousChapterKey)}
+                  disabled={!previousChapterKey}
+                  muted
+                />
+                <ToolbarButton
+                  label="下一章"
+                  onClick={() => nextChapterKey && scrollToChapter(nextChapterKey)}
+                  disabled={!nextChapterKey}
+                  muted
+                />
+                <ToolbarButton
+                  label="章节依据"
+                  onClick={() => setInspectorOpen((current) => !current)}
+                  muted
+                />
+                <ToolbarButton label={generating ? "续写中..." : "AI续写"} onClick={handleGenerateChapter} disabled={!activeDraft || generating} />
+                <ToolbarButton label={saving ? "保存中..." : "保存"} onClick={handleSave} disabled={!activeDraft || saving} />
+                {activeDraft && (
+                  <a
+                    href={getDraftDownloadUrl(activeDraft.id, "docx")}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="rounded-lg px-4 py-2 text-xs font-medium"
+                    style={{ background: CHAT_THEME.muted, color: CHAT_THEME.text, border: `1px solid ${CHAT_THEME.border}` }}
+                  >
+                    导出
+                  </a>
+                )}
               </div>
-            </div>
-
-            <div className="hidden items-center gap-2 lg:flex">
-              <StatusPill label={saveStateLabel} tone={isDirty ? "warn" : "good"} />
-              <StatusPill label={`进度 ${progress}%`} />
-              {generating && <StatusPill label="AI 生成中" tone="good" />}
-            </div>
-
-            <div className="flex items-center gap-2 sm:justify-end">
-              <SegmentedControl<PageWidthMode>
-                value={pageWidthMode}
-                options={[
-                  { label: "标准", value: "standard" },
-                  { label: "宽版", value: "wide" },
-                ]}
-                onChange={setPageWidthMode}
-              />
-              <SegmentedControl<PageZoom>
-                value={pageZoom}
-                options={[
-                  { label: "90%", value: 90 },
-                  { label: "100%", value: 100 },
-                  { label: "110%", value: 110 },
-                ]}
-                onChange={setPageZoom}
-              />
-              <ToolbarButton label="续写" onClick={handleGenerateChapter} disabled={!activeDraft || generating} />
-              <ToolbarButton label="复制" onClick={handleCopy} muted />
             </div>
           </header>
 
           <div
-            className="min-h-0 flex-1 overflow-y-auto px-3 py-5 sm:px-5 lg:px-8 lg:py-8"
-            style={{ background: "#e9e4da", scrollbarWidth: "none" }}
+            className="min-h-0 flex-1 overflow-y-auto px-4 py-5 lg:px-6 lg:py-6"
+            style={{ background: "#e6e0d5", scrollbarWidth: "none" }}
           >
             {projects.length === 0 ? (
               <EmptyCanvas
@@ -522,274 +581,337 @@ export default function WritingPage() {
             ) : !activeDraft ? (
               <EmptyCanvas
                 title="还没有论文草稿"
-                description="点击左侧“新建”，创建第一份可编辑草稿。"
+                description="先创建一份草稿，再开始写作。"
                 actionLabel="新建草稿"
                 onAction={handleNewDraft}
               />
             ) : (
-              <div className="mx-auto flex w-full flex-col items-center" style={{ maxWidth: workspaceMaxWidth }}>
-                <DocumentRuler maxWidth={pageMaxWidth} />
-                <article
-                  className="min-h-[760px] w-full origin-top border px-5 py-7 shadow-[0_18px_45px_rgba(54,43,29,0.18)] sm:px-9 sm:py-9 lg:min-h-[1040px] lg:px-16 lg:py-14"
-                  style={{
-                    maxWidth: pageMaxWidth,
-                    transform: `scale(${pageZoom / 100})`,
-                    marginBottom: `${(pageZoom - 100) * 8}px`,
-                    background: "#fffdf8",
-                    borderColor: "rgba(73, 62, 44, 0.18)",
-                  }}
-                >
-                  <div className="mb-8 flex flex-col gap-4 border-b pb-6 sm:flex-row sm:items-start sm:justify-between sm:gap-6" style={{ borderColor: "rgba(73, 62, 44, 0.14)" }}>
-                    <div className="min-w-0">
-                      <h2 className="text-[30px] font-semibold leading-tight" style={{ fontFamily: "var(--font-cormorant), serif" }}>
-                        {currentTitle}
-                      </h2>
-                      <p className="mt-2 text-xs" style={{ color: CHAT_THEME.mid }}>
-                        {activeDraft.title} · {formatSectionStatus(activeSection?.status)}
-                      </p>
-                      <div className="mt-3 flex flex-wrap gap-2">
-                        {evidenceBadges.map((badge) => (
-                          <EvidenceBadge key={badge.label} label={badge.label} tone={badge.tone} />
+              <article
+                className="mx-auto min-h-[900px] w-full max-w-[960px] border bg-[#fffdf8] px-8 py-8 shadow-[0_12px_32px_rgba(54,43,29,0.12)] lg:px-14 lg:py-12"
+                style={{ borderColor: "rgba(73, 62, 44, 0.18)" }}
+              >
+                <div className="mb-8 flex items-start justify-between gap-4 border-b pb-5" style={{ borderColor: "rgba(73, 62, 44, 0.14)" }}>
+                  <div className="min-w-0">
+                    <div className="text-[11px] uppercase tracking-[0.18em]" style={{ color: CHAT_THEME.low }}>
+                      Chapter {activeChapterIndex + 1}
+                    </div>
+                    <h3 className="mt-2 text-[32px] font-semibold leading-tight" style={{ fontFamily: "var(--font-cormorant), serif", color: CHAT_THEME.text }}>
+                      {currentTitle}
+                    </h3>
+                  </div>
+                  <div className="shrink-0 text-right text-[11px]" style={{ color: CHAT_THEME.mid }}>
+                    <div>{saveStateLabel}</div>
+                    <div className="mt-1">{totalWordCount} 字</div>
+                  </div>
+                </div>
+                <div className="space-y-10">
+                  {CHAPTER_KEYS.map((key, index) => {
+                    const section = activeDraft ? getSection(activeDraft, key) : null;
+                    const title = section?.title || FALLBACK_CHAPTERS[key];
+                    const chapterContent = editorContents[key] || "";
+                    const chapterWordCount = chapterContent.replace(/\s+/g, "").length;
+                    const resultSensitive = ["chapter_4_implementation", "chapter_5_experiment"].includes(key);
+                    const active = activeChapterKey === key;
+
+                    return (
+                      <section
+                        key={key}
+                        className="scroll-mt-24 border-b pb-8 last:border-b-0"
+                        style={{ borderColor: "rgba(73, 62, 44, 0.10)" }}
+                      >
+                        <div className="mb-4 flex items-start justify-between gap-4">
+                          <div className="min-w-0">
+                            <div className="text-[11px] uppercase tracking-[0.18em]" style={{ color: active ? CHAT_THEME.primary : CHAT_THEME.low }}>
+                              Chapter {index + 1}
+                            </div>
+                            <h3
+                              className="mt-2 text-[28px] font-semibold leading-tight"
+                              style={{ fontFamily: "var(--font-cormorant), serif", color: CHAT_THEME.text }}
+                            >
+                              {title}
+                            </h3>
+                            <div className="mt-2 text-[11px]" style={{ color: active ? CHAT_THEME.primary : CHAT_THEME.mid }}>
+                              {formatSectionStatus(section?.status)}
+                            </div>
+                          </div>
+                          <div className="shrink-0 text-right text-[11px]" style={{ color: CHAT_THEME.mid }}>
+                            <div>{chapterWordCount} 字</div>
+                            {active ? <div className="mt-1">当前编辑章节</div> : null}
+                          </div>
+                        </div>
+
+                        {resultSensitive && !hasOutcomes ? (
+                          <p
+                            className="mb-5 rounded-xl px-4 py-3 text-[12px] leading-6"
+                            style={{ background: CHAT_THEME.warnSoft, color: CHAT_THEME.warn, border: "1px solid rgba(160, 92, 35, 0.2)" }}
+                          >
+                            当前缺少真实成果材料，本章只应写方案或待验证内容，不应直接写实验结果和具体结论。
+                          </p>
+                        ) : null}
+
+                        <AutoGrowingTextarea
+                          registerRef={(node) => {
+                            chapterTextareaRefs.current[key] = node;
+                          }}
+                          value={stripInlineReferenceSection(chapterContent)}
+                          onFocus={() => setActiveChapterKey(key)}
+                          onChange={(value) => {
+                            setActiveChapterKey(key);
+                            setEditorContents((current) => ({
+                              ...current,
+                              [key]: value,
+                            }));
+                          }}
+                          placeholder={`直接在这里续写${title}。需要依据时，点击右上角“章节依据”。`}
+                          active={active}
+                        />
+                      </section>
+                    );
+                  })}
+
+                  {documentReferences.length > 0 ? (
+                    <section
+                      className="scroll-mt-24 border-t pt-10"
+                      style={{ borderColor: "rgba(73, 62, 44, 0.16)" }}
+                    >
+                      <div className="mb-4">
+                        <div className="text-[11px] uppercase tracking-[0.18em]" style={{ color: CHAT_THEME.low }}>
+                          References
+                        </div>
+                        <h3
+                          className="mt-2 text-[28px] font-semibold leading-tight"
+                          style={{ fontFamily: "var(--font-cormorant), serif", color: CHAT_THEME.text }}
+                        >
+                          参考文献
+                        </h3>
+                      </div>
+                      <div className="space-y-4 text-[15px] leading-8" style={{ color: CHAT_THEME.text, fontFamily: "Georgia, 'Times New Roman', 'Noto Serif SC', serif" }}>
+                        {documentReferences.map((reference, index) => (
+                          <p key={`${reference}-${index}`}>[{index + 1}] {reference}</p>
                         ))}
                       </div>
-                      {isResultSensitiveChapter && !hasOutcomes && (
-                        <p
-                          className="mt-3 max-w-2xl rounded-lg px-3 py-2 text-[12px] leading-6"
-                          style={{ background: CHAT_THEME.warnSoft, color: CHAT_THEME.warn, border: `1px solid rgba(160, 92, 35, 0.2)` }}
-                        >
-                          当前缺少真实成果材料，本章只应生成系统设计、实验方案或待验证描述，不应生成实验结果、性能结论或具体统计数据。
-                        </p>
-                      )}
-                    </div>
-                    <span className="shrink-0 text-xs" style={{ color: CHAT_THEME.mid }}>
-                      {wordCount} 字
-                    </span>
-                  </div>
-
-                  <textarea
-                    value={editorContent}
-                    onChange={(event) => setEditorContent(event.target.value)}
-                    placeholder="在这里编辑当前章节。也可以点击右上角“续写”让 AI 基于项目资料生成本章内容。"
-                    className="min-h-[540px] w-full resize-none bg-transparent text-[15px] leading-8 outline-none sm:min-h-[640px] sm:text-[16px] lg:min-h-[760px]"
-                    style={{ color: CHAT_THEME.text, fontFamily: "Georgia, 'Times New Roman', 'Noto Serif SC', serif" }}
-                  />
-                </article>
-
-                <div
-                  className="mt-3 flex w-full flex-wrap items-center justify-between gap-3 rounded-lg px-4 py-2 text-[11px]"
-                  style={{ maxWidth: pageMaxWidth, background: "rgba(255, 253, 248, 0.82)", color: CHAT_THEME.mid, border: `1px solid rgba(73, 62, 44, 0.12)` }}
-                >
-                  <span>页面视图</span>
-                  <span>{wordCount} 字</span>
-                  <span>进度 {progress}%</span>
-                  <span>{pageZoom}%</span>
-                  <span>{formatSectionStatus(activeSection?.status)}</span>
-                  <span>证据 {evidenceReadyCount}/3</span>
-                  <span>{saveStateLabel}</span>
-                  <span>Ctrl+S 保存</span>
+                    </section>
+                  ) : null}
                 </div>
-              </div>
+              </article>
             )}
           </div>
 
-          <footer className="flex min-h-14 shrink-0 flex-col gap-3 border-t px-4 py-3 sm:flex-row sm:items-center sm:justify-between lg:px-7" style={{ background: CHAT_THEME.card, borderColor: CHAT_THEME.border }}>
+          <footer className="border-t px-4 py-3 lg:px-6" style={{ background: CHAT_THEME.card, borderColor: CHAT_THEME.border }}>
             <div className="text-xs" style={{ color: error ? "#9a2f2f" : CHAT_THEME.mid }}>
-              {error || notice || "编辑后请保存当前章节"}
-            </div>
-            <div className="flex flex-wrap items-center gap-2">
-              {activeDraft && (
-                <a
-                  href={getDraftDownloadUrl(activeDraft.id, "docx")}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="rounded-lg px-4 py-2 text-xs font-medium"
-                  style={{ background: CHAT_THEME.muted, color: CHAT_THEME.text, border: `1px solid ${CHAT_THEME.border}` }}
-                >
-                  导出 DOCX
-                </a>
-              )}
-              <button
-                type="button"
-                onClick={handleSave}
-                disabled={!activeDraft || saving}
-                className="rounded-lg px-5 py-2 text-xs font-medium disabled:opacity-40"
-                style={{ background: CHAT_THEME.primary, color: CHAT_THEME.bg }}
-              >
-                {saving ? "保存中..." : "保存"}
-              </button>
+              {error || notice || "打开页面即可直接写，辅助信息已收进“章节依据”。"}
             </div>
           </footer>
-        </section>
 
-        <aside className="hidden min-h-0 flex-col border-l xl:flex" style={{ background: CHAT_THEME.card, borderColor: CHAT_THEME.border }}>
-          <div className="flex h-14 shrink-0 items-center gap-2 border-b px-4" style={{ borderColor: CHAT_THEME.border }}>
-            <PanelTabButton label="建议" active={rightTab === "suggestions"} onClick={() => setRightTab("suggestions")} />
-            <PanelTabButton label="引用" active={rightTab === "references"} onClick={() => setRightTab("references")} />
-            <PanelTabButton label="交付" active={rightTab === "delivery"} onClick={() => setRightTab("delivery")} />
-          </div>
+          {inspectorOpen && (
+            <aside
+              className="absolute inset-y-0 right-0 z-20 flex w-[340px] flex-col border-l shadow-[-16px_0_40px_rgba(34,27,18,0.18)]"
+              style={{ background: CHAT_THEME.card, borderColor: CHAT_THEME.border }}
+            >
+              <div className="flex items-center justify-between border-b px-4 py-4" style={{ borderColor: CHAT_THEME.border }}>
+                <div>
+                  <p className="text-[11px] uppercase tracking-[0.16em]" style={{ color: CHAT_THEME.low }}>
+                    Assistant Drawer
+                  </p>
+                  <h3 className="mt-1 text-[18px] font-semibold" style={{ color: CHAT_THEME.text }}>
+                    本章辅助信息
+                  </h3>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setInspectorOpen(false)}
+                  className="rounded-full px-3 py-1.5 text-[11px] font-medium"
+                  style={{ background: CHAT_THEME.muted, color: CHAT_THEME.text }}
+                >
+                  关闭
+                </button>
+              </div>
 
-          <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4" style={{ scrollbarWidth: "none" }}>
-            {rightTab === "suggestions" && (
-              <>
-                <SidePanel title="AI 写作建议">
-                  {chapterSuggestions.map((text) => (
-                    <Suggestion key={text} text={text} />
-                  ))}
-                </SidePanel>
+              <div className="flex h-14 shrink-0 items-center gap-2 border-b px-4" style={{ borderColor: CHAT_THEME.border }}>
+                <PanelTabButton label="建议" active={rightTab === "suggestions"} onClick={() => setRightTab("suggestions")} />
+                <PanelTabButton label="引用" active={rightTab === "references"} onClick={() => setRightTab("references")} />
+                <PanelTabButton label="交付" active={rightTab === "delivery"} onClick={() => setRightTab("delivery")} />
+              </div>
 
-                <SidePanel title="当前章节知识依据">
-                  {chapterCitations.length > 0 ? (
-                    chapterCitations.slice(0, 6).map((citation, index) => (
-                      <ReferenceItem key={`${citation}-${index}`} prefix={`引用 ${index + 1}`} text={citation} actionable />
-                    ))
-                  ) : (
-                    <p className="text-[12px] leading-6" style={{ color: CHAT_THEME.mid }}>
-                      当前章节还没有沉淀引用。先生成章节或在项目文献中保存依据后，这里会显示本章直接使用的引用。
-                    </p>
-                  )}
-
-                  {chapterNoteMatches.length > 0 && (
-                    <div className="mt-4 border-t pt-4" style={{ borderColor: CHAT_THEME.border }}>
-                      <p className="mb-2 text-[11px] tracking-wide" style={{ color: CHAT_THEME.low }}>关联证据线索</p>
-                      {chapterNoteMatches.map((item, index) => (
-                        <ReferenceItem key={`${item}-${index}`} prefix={`线索 ${index + 1}`} text={item} actionable />
+              <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4" style={{ scrollbarWidth: "none" }}>
+                {rightTab === "suggestions" && (
+                  <>
+                    <SidePanel title="AI 写作建议">
+                      {chapterSuggestions.map((text) => (
+                        <Suggestion key={text} text={text} />
                       ))}
-                    </div>
-                  )}
-                </SidePanel>
+                    </SidePanel>
 
-                <SidePanel title="生成与检查">
-                  <ActionButton label={generating ? "生成中..." : "生成当前章节"} onClick={handleGenerateChapter} disabled={!activeDraft || generating} />
-                  <ActionButton label={generating ? "生成中..." : "生成摘要"} onClick={handleGenerateAbstract} disabled={!activeDraft || generating} />
-                  <ActionButton label={checking ? "检查中..." : "合规检查"} onClick={handleCheckCompliance} disabled={!activeDraft || checking} danger />
-                </SidePanel>
+                    <SidePanel title="生成与检查">
+                      <ActionButton label={generating ? "生成中..." : "生成当前章节"} onClick={handleGenerateChapter} disabled={!activeDraft || generating} />
+                      <ActionButton label={generating ? "生成中..." : "生成摘要"} onClick={handleGenerateAbstract} disabled={!activeDraft || generating} />
+                      <ActionButton label={checking ? "检查中..." : "合规检查"} onClick={handleCheckCompliance} disabled={!activeDraft || checking} danger />
+                      <ActionButton label="复制当前章节" onClick={handleCopy} disabled={!activeChapterContent} />
+                    </SidePanel>
 
-                {abstractResult && (
-                  <SidePanel title="摘要结果">
-                    <p className="text-[12px] leading-6" style={{ color: CHAT_THEME.text }}>{abstractResult.abstract_cn}</p>
-                    <p className="mt-2 text-[11px]" style={{ color: CHAT_THEME.mid }}>
-                      关键词：{abstractResult.keywords_cn.join("、")}
-                    </p>
-                  </SidePanel>
+                    {abstractResult && (
+                      <SidePanel title="摘要结果">
+                        <p className="text-[12px] leading-6" style={{ color: CHAT_THEME.text }}>{abstractResult.abstract_cn}</p>
+                        <p className="mt-2 text-[11px]" style={{ color: CHAT_THEME.mid }}>
+                          关键词：{abstractResult.keywords_cn.join("、")}
+                        </p>
+                      </SidePanel>
+                    )}
+
+                    {complianceResult && (
+                      <SidePanel title="合规概览">
+                        <div className="text-2xl font-semibold" style={{ fontFamily: "monospace", color: CHAT_THEME.text }}>
+                          {complianceResult.overall_score}
+                        </div>
+                        <p className="mt-2 text-[12px] leading-6" style={{ color: CHAT_THEME.mid }}>
+                          {complianceResult.passed ? "当前草稿通过基础合规检查。" : "当前草稿存在需要确认的问题。"}
+                        </p>
+                      </SidePanel>
+                    )}
+                  </>
                 )}
 
-                {complianceResult && (
-                  <SidePanel title="合规概览">
-                    <div className="text-2xl font-semibold" style={{ fontFamily: "monospace", color: CHAT_THEME.text }}>
-                      {complianceResult.overall_score}
-                    </div>
-                    <p className="mt-2 text-[12px] leading-6" style={{ color: CHAT_THEME.mid }}>
-                      {complianceResult.passed ? "当前草稿通过基础合规检查。" : "当前草稿存在需要确认的问题。"}
-                    </p>
-                  </SidePanel>
-                )}
-              </>
-            )}
-
-            {rightTab === "references" && (
-              <>
-                <SidePanel title="项目设计依据">
-                  {latestDesign?.topic && (
-                    <p className="mb-3 text-[12px] leading-6" style={{ color: CHAT_THEME.text }}>
-                      {latestDesign.topic}
-                    </p>
-                  )}
-                  {(designContent?.research_questions || []).slice(0, 3).map((item, index) => (
-                    <ReferenceItem key={`question-${index}`} prefix="问题" text={item} actionable />
-                  ))}
-                  {(designContent?.methods || []).slice(0, 3).map((item, index) => (
-                    <ReferenceItem key={`method-${index}`} prefix="方法" text={item} actionable />
-                  ))}
-                  {designReferences.slice(0, 5).map((reference, index) => (
-                    <ReferenceItem key={`${reference}-${index}`} prefix={`文献 ${index + 1}`} text={reference} actionable />
-                  ))}
-                  {!latestDesign && (
-                    <p className="text-[12px] leading-6" style={{ color: CHAT_THEME.mid }}>
-                      暂无项目设计。可先完成研究方向和项目设计后，再作为论文写作依据。
-                    </p>
-                  )}
-                </SidePanel>
-
-                <SidePanel title="草稿引用">
-                  {draftReferences.slice(0, 6).map((reference, index) => (
-                    <ReferenceItem key={`${reference}-${index}`} prefix={`引用 ${index + 1}`} text={reference} actionable />
-                  ))}
-                  {draftReferences.length === 0 && (
-                    <p className="text-[12px] leading-6" style={{ color: CHAT_THEME.mid }}>
-                      当前草稿暂无引用记录。可先在文献搜索中保存文献，或在后续生成章节时沉淀引用。
-                    </p>
-                  )}
-                </SidePanel>
-
-                <SidePanel title="项目成果">
-                  <StatLine label="成果材料" value={`${outcomes.length} 项`} />
-                  {outcomes.slice(0, 5).map((outcome) => (
-                    <div key={outcome.id} className="mb-2 rounded-lg px-3 py-2 text-[11px] leading-5" style={{ background: CHAT_THEME.bg, color: CHAT_THEME.text }}>
-                      <div className="font-medium">{outcome.name}</div>
-                      <div className="mt-1" style={{ color: CHAT_THEME.low }}>{outcome.outcome_type}</div>
-                      {outcome.description && (
-                        <div className="mt-1" style={{ color: CHAT_THEME.mid }}>
-                          {outcome.description}
-                        </div>
-                      )}
-                    </div>
-                  ))}
-                  {outcomes.length === 0 && (
-                    <p className="text-[12px] leading-6" style={{ color: CHAT_THEME.mid }}>
-                      暂无成果材料。涉及实现、实验和结果章节前，建议先上传实验记录、截图、数据表或系统成果。
-                    </p>
-                  )}
-                </SidePanel>
-              </>
-            )}
-
-            {rightTab === "delivery" && (
-              <>
-                <SidePanel title="交付状态">
-                  <StatLine label="草稿进度" value={`${progress}%`} />
-                  <StatLine label="当前章节" value={formatSectionStatus(activeSection?.status)} />
-                  <StatLine label="成果材料" value={`${outcomes.length} 项`} />
-                  <StatLine label="合规检查" value={complianceResult ? `${complianceResult.overall_score} 分` : "尚未检查"} />
-                  <StatLine label="答辩大纲" value={defenseOutline ? `${defenseOutline.total_slides} 页` : "待生成"} />
-                </SidePanel>
-
-                <SidePanel title="导出草稿">
-                  {activeDraft ? (
-                    <div className="grid grid-cols-2 gap-2">
-                      <DownloadLink href={getDraftDownloadUrl(activeDraft.id, "docx")} label="DOCX" />
-                      <DownloadLink href={getDraftDownloadUrl(activeDraft.id, "pdf")} label="PDF" />
-                    </div>
-                  ) : (
-                    <p className="text-[12px] leading-6" style={{ color: CHAT_THEME.mid }}>
-                      创建草稿后可导出 DOCX 或 PDF。
-                    </p>
-                  )}
-                </SidePanel>
-
-                <SidePanel title="答辩 PPT 大纲">
-                  {defenseOutline ? (
-                    <>
-                      {defenseOutline.slides.slice(0, 6).map((slide) => (
-                        <div key={slide.page} className="mb-2 rounded-lg px-3 py-2 text-[11px] leading-5" style={{ background: CHAT_THEME.bg, color: CHAT_THEME.text }}>
-                          第 {slide.page} 页 · {slide.title}
-                        </div>
-                      ))}
-                      {!defenseOutline.has_real_data && (
-                        <p className="mt-2 text-[11px] leading-5" style={{ color: CHAT_THEME.warn }}>
-                          当前大纲提示真实数据不足，建议补充成果材料后再生成答辩 PPT。
+                {rightTab === "references" && (
+                  <>
+                    <SidePanel title="项目设计依据">
+                      {latestDesign?.topic && (
+                        <p className="mb-3 text-[12px] leading-6" style={{ color: CHAT_THEME.text }}>
+                          {latestDesign.topic}
                         </p>
                       )}
-                    </>
-                  ) : (
-                    <p className="text-[12px] leading-6" style={{ color: CHAT_THEME.mid }}>
-                      暂无答辩 PPT 大纲。可在后续完整工作流中生成。
-                    </p>
-                  )}
-                </SidePanel>
-              </>
-            )}
-          </div>
-        </aside>
+                      {(designContent?.research_questions || []).slice(0, 3).map((item, index) => (
+                        <ReferenceItem key={`question-${index}`} prefix="问题" text={item} actionable />
+                      ))}
+                      {(designContent?.methods || []).slice(0, 3).map((item, index) => (
+                        <ReferenceItem key={`method-${index}`} prefix="方法" text={item} actionable />
+                      ))}
+                      {designReferences.slice(0, 5).map((reference, index) => (
+                        <ReferenceItem key={`${reference}-${index}`} prefix={`文献 ${index + 1}`} text={reference} actionable />
+                      ))}
+                      {!latestDesign && (
+                        <p className="text-[12px] leading-6" style={{ color: CHAT_THEME.mid }}>
+                          暂无项目设计。可先完成研究方向和项目设计后，再作为论文写作依据。
+                        </p>
+                      )}
+                    </SidePanel>
+
+                    <SidePanel title="当前章节直接依据">
+                      {chapterCitations.length > 0 ? (
+                        chapterCitations.slice(0, 6).map((citation, index) => (
+                          <ReferenceItem key={`${citation}-${index}`} prefix={`引用 ${index + 1}`} text={citation} actionable />
+                        ))
+                      ) : (
+                        <p className="text-[12px] leading-6" style={{ color: CHAT_THEME.mid }}>
+                          当前章节还没有沉淀引用。先生成章节或在项目文献中保存依据后，这里会显示本章直接使用的引用。
+                        </p>
+                      )}
+
+                      {chapterNoteMatches.length > 0 && (
+                        <div className="mt-4 border-t pt-4" style={{ borderColor: CHAT_THEME.border }}>
+                          <p className="mb-2 text-[11px] tracking-wide" style={{ color: CHAT_THEME.low }}>关联证据线索</p>
+                          {chapterNoteMatches.map((item, index) => (
+                            <ReferenceItem key={`${item}-${index}`} prefix={`线索 ${index + 1}`} text={item} actionable />
+                          ))}
+                        </div>
+                      )}
+
+                      {chapterKnowledgeActions.outcomes.length ? (
+                        <div className="mt-4 border-t pt-4" style={{ borderColor: CHAT_THEME.border }}>
+                          <p className="mb-2 text-[11px] tracking-wide" style={{ color: CHAT_THEME.low }}>本章使用的成果材料</p>
+                          {chapterKnowledgeActions.outcomes.slice(0, 4).map((item: ChapterKnowledgeActionItem, index: number) => (
+                            <KnowledgeActionItem key={item.key} prefix={`成果 ${index + 1}`} item={item} />
+                          ))}
+                        </div>
+                      ) : null}
+
+                      {chapterKnowledgeActions.chunks.length ? (
+                        <div className="mt-4 border-t pt-4" style={{ borderColor: CHAT_THEME.border }}>
+                          <p className="mb-2 text-[11px] tracking-wide" style={{ color: CHAT_THEME.low }}>本章命中的资料片段</p>
+                          {chapterKnowledgeActions.chunks.slice(0, 4).map((item: ChapterKnowledgeActionItem, index: number) => (
+                            <KnowledgeActionItem key={item.key} prefix={`资料 ${index + 1}`} item={item} />
+                          ))}
+                        </div>
+                      ) : null}
+
+                      {chapterKnowledgeActions.papers.length ? (
+                        <div className="mt-4 border-t pt-4" style={{ borderColor: CHAT_THEME.border }}>
+                          <p className="mb-2 text-[11px] tracking-wide" style={{ color: CHAT_THEME.low }}>本章关联的项目文献</p>
+                          {chapterKnowledgeActions.papers.slice(0, 3).map((item: ChapterKnowledgeActionItem, index: number) => (
+                            <KnowledgeActionItem key={item.key} prefix={`文献 ${index + 1}`} item={item} />
+                          ))}
+                        </div>
+                      ) : null}
+
+                      {chapterKnowledgeActions.notes.length ? (
+                        <div className="mt-4 border-t pt-4" style={{ borderColor: CHAT_THEME.border }}>
+                          <p className="mb-2 text-[11px] tracking-wide" style={{ color: CHAT_THEME.low }}>本章关联的证据卡片</p>
+                          {chapterKnowledgeActions.notes.slice(0, 3).map((item: ChapterKnowledgeActionItem, index: number) => (
+                            <KnowledgeActionItem key={item.key} prefix={`证据 ${index + 1}`} item={item} />
+                          ))}
+                        </div>
+                      ) : null}
+                    </SidePanel>
+
+                    <SidePanel title="项目成果">
+                      <StatLine label="成果材料" value={`${outcomes.length} 项`} />
+                      {outcomes.slice(0, 5).map((outcome) => (
+                        <div key={outcome.id} className="mb-2 rounded-lg px-3 py-2 text-[11px] leading-5" style={{ background: CHAT_THEME.bg, color: CHAT_THEME.text }}>
+                          <div className="font-medium">{outcome.name}</div>
+                          <div className="mt-1" style={{ color: CHAT_THEME.low }}>{outcome.outcome_type}</div>
+                          {outcome.description && (
+                            <div className="mt-1" style={{ color: CHAT_THEME.mid }}>
+                              {outcome.description}
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                      {outcomes.length === 0 && (
+                        <p className="text-[12px] leading-6" style={{ color: CHAT_THEME.mid }}>
+                          暂无成果材料。涉及实现、实验和结果章节前，建议先上传实验记录、截图、数据表或系统成果。
+                        </p>
+                      )}
+                      {activeChapterKnowledge?.linked_outcomes?.length ? (
+                        <div className="mt-3 border-t pt-3" style={{ borderColor: CHAT_THEME.border }}>
+                          <p className="mb-2 text-[11px] tracking-wide" style={{ color: CHAT_THEME.low }}>当前章节已使用</p>
+                          {activeChapterKnowledge.linked_outcomes.map((outcome: ProjectWorkspaceLinkedOutcome) => (
+                            <div key={outcome.id} className="mb-2 rounded-lg px-3 py-2 text-[11px] leading-5" style={{ background: CHAT_THEME.card, color: CHAT_THEME.text }}>
+                              {outcome.name}
+                            </div>
+                          ))}
+                        </div>
+                      ) : null}
+                    </SidePanel>
+                  </>
+                )}
+
+                {rightTab === "delivery" && (
+                  <>
+                    <SidePanel title="交付状态">
+                      <StatLine label="草稿进度" value={`${progress}%`} />
+                      <StatLine label="当前章节" value={formatSectionStatus(activeSection?.status)} />
+                      <StatLine label="成果材料" value={`${outcomes.length} 项`} />
+                      <StatLine label="合规检查" value={complianceResult ? `${complianceResult.overall_score} 分` : "尚未检查"} />
+                    </SidePanel>
+
+                    <SidePanel title="导出草稿">
+                      {activeDraft ? (
+                        <div className="grid grid-cols-2 gap-2">
+                          <DownloadLink href={getDraftDownloadUrl(activeDraft.id, "docx")} label="DOCX" />
+                          <DownloadLink href={getDraftDownloadUrl(activeDraft.id, "pdf")} label="PDF" />
+                        </div>
+                      ) : (
+                        <p className="text-[12px] leading-6" style={{ color: CHAT_THEME.mid }}>
+                          创建草稿后可导出 DOCX 或 PDF。
+                        </p>
+                      )}
+                    </SidePanel>
+
+                  </>
+                )}
+              </div>
+            </aside>
+          )}
+        </section>
       </main>
 
       {settingsOpen && <WorkbenchSettingsPanel onClose={() => setSettingsOpen(false)} />}
@@ -878,90 +1000,55 @@ function ToolbarButton({
   );
 }
 
-function SegmentedControl<T extends string | number>({
+const AutoGrowingTextarea = forwardRef<HTMLTextAreaElement, {
+  value: string;
+  onChange: (value: string) => void;
+  onFocus: () => void;
+  placeholder: string;
+  active: boolean;
+  registerRef?: (node: HTMLTextAreaElement | null) => void;
+}>(function AutoGrowingTextarea({
   value,
-  options,
   onChange,
-}: {
-  value: T;
-  options: { label: string; value: T }[];
-  onChange: (value: T) => void;
-}) {
-  return (
-    <div className="hidden rounded-lg p-0.5 lg:flex" style={{ background: CHAT_THEME.muted, border: `1px solid ${CHAT_THEME.border}` }}>
-      {options.map((option) => {
-        const active = option.value === value;
-        return (
-          <button
-            key={String(option.value)}
-            type="button"
-            onClick={() => onChange(option.value)}
-            className="rounded-md px-2.5 py-1.5 text-[11px] font-medium"
-            style={{
-              background: active ? CHAT_THEME.card : "transparent",
-              color: active ? CHAT_THEME.text : CHAT_THEME.mid,
-            }}
-          >
-            {option.label}
-          </button>
-        );
-      })}
-    </div>
-  );
-}
+  onFocus,
+  placeholder,
+  active,
+  registerRef,
+}, forwardedRef) {
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
 
-function StatusPill({ label, tone = "neutral" }: { label: string; tone?: "neutral" | "good" | "warn" }) {
-  const colorMap = {
-    neutral: { bg: CHAT_THEME.muted, text: CHAT_THEME.mid, border: CHAT_THEME.border },
-    good: { bg: CHAT_THEME.primarySoft, text: CHAT_THEME.primary, border: "rgba(24, 48, 29, 0.16)" },
-    warn: { bg: CHAT_THEME.warnSoft, text: CHAT_THEME.warn, border: "rgba(160, 92, 35, 0.2)" },
-  }[tone];
+  useEffect(() => {
+    const node = textareaRef.current;
+    if (!node) return;
+    node.style.height = "0px";
+    node.style.height = `${Math.max(220, node.scrollHeight)}px`;
+  }, [value]);
 
   return (
-    <span
-      className="rounded-full px-2.5 py-1 text-[11px] font-medium"
-      style={{ background: colorMap.bg, color: colorMap.text, border: `1px solid ${colorMap.border}` }}
-    >
-      {label}
-    </span>
-  );
-}
-
-function DocumentRuler({ maxWidth }: { maxWidth: number }) {
-  return (
-    <div
-      className="mb-2 h-8 w-full overflow-hidden rounded-t-lg border px-4 sm:px-8 lg:px-10"
-      style={{ maxWidth, background: "#f8f4ea", borderColor: "rgba(73, 62, 44, 0.14)" }}
-    >
-      <div
-        className="h-full"
-        style={{
-          backgroundImage:
-            "repeating-linear-gradient(to right, rgba(73,62,44,0.28) 0 1px, transparent 1px 24px), repeating-linear-gradient(to right, rgba(73,62,44,0.46) 0 1px, transparent 1px 96px)",
-          backgroundPosition: "0 100%",
-          backgroundSize: "100% 10px, 100% 16px",
-          backgroundRepeat: "repeat-x",
-        }}
-      />
-    </div>
-  );
-}
-
-function EvidenceBadge({ label, tone }: { label: string; tone: "good" | "warn" }) {
-  const isWarn = tone === "warn";
-  return (
-    <span
-      className="rounded-full px-2.5 py-1 text-[11px] font-medium"
-      style={{
-        background: isWarn ? CHAT_THEME.warnSoft : CHAT_THEME.primarySoft,
-        color: isWarn ? CHAT_THEME.warn : CHAT_THEME.primary,
-        border: `1px solid ${isWarn ? "rgba(160, 92, 35, 0.2)" : "rgba(24, 48, 29, 0.16)"}`,
+    <textarea
+      ref={(node) => {
+        textareaRef.current = node;
+        registerRef?.(node);
+        if (typeof forwardedRef === "function") {
+          forwardedRef(node);
+        } else if (forwardedRef) {
+          forwardedRef.current = node;
+        }
       }}
-    >
-      {label}
-    </span>
+      value={value}
+      onFocus={onFocus}
+      onChange={(event) => onChange(event.target.value)}
+      placeholder={placeholder}
+      className="w-full resize-none bg-transparent text-[16px] leading-8 outline-none"
+      style={{
+        minHeight: 220,
+        color: CHAT_THEME.text,
+        fontFamily: "Georgia, 'Times New Roman', 'Noto Serif SC', serif",
+        boxShadow: active ? "inset 0 0 0 1px rgba(24,48,29,0.08)" : "none",
+      }}
+    />
   );
-}
+});
 
 function PanelTabButton({
   label,
@@ -1055,6 +1142,72 @@ function ReferenceItem({ prefix, text, actionable = false }: { prefix: string; t
             复制
           </button>
         ) : null}
+      </div>
+    </div>
+  );
+}
+
+function KnowledgeActionItem({
+  prefix,
+  item,
+}: {
+  prefix: string;
+  item: {
+    title: string;
+    subtitle: string;
+    sectionTitle?: string;
+    sourceHint?: string;
+    href: string;
+    actionLabel: string;
+    external: boolean;
+    downloadHref?: string;
+    downloadLabel?: string;
+  };
+}) {
+  return (
+    <div className="mb-2 rounded-lg px-3 py-2 text-[11px] leading-5" style={{ background: CHAT_THEME.bg, color: CHAT_THEME.mid }}>
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0 break-words">
+          <span className="font-medium" style={{ color: CHAT_THEME.text }}>{prefix}：</span>
+          {item.title}
+          {item.subtitle ? (
+            <div className="mt-1" style={{ color: CHAT_THEME.low }}>
+              {item.subtitle}
+            </div>
+          ) : null}
+          {item.sourceHint ? (
+            <div className="mt-1 text-[10px]" style={{ color: CHAT_THEME.mid }}>
+              {item.sourceHint}
+            </div>
+          ) : null}
+          {item.sectionTitle ? (
+            <div className="mt-1" style={{ color: CHAT_THEME.low }}>
+              所属章节：{item.sectionTitle}
+            </div>
+          ) : null}
+        </div>
+        <div className="flex shrink-0 flex-col items-end gap-1">
+          <a
+            href={item.href}
+            target={item.external ? "_blank" : undefined}
+            rel={item.external ? "noreferrer" : undefined}
+            className="rounded border px-2 py-1 text-[10px]"
+            style={{ borderColor: CHAT_THEME.border, color: CHAT_THEME.low }}
+          >
+            {item.actionLabel}
+          </a>
+          {item.downloadHref && item.downloadLabel ? (
+            <a
+              href={item.downloadHref}
+              target="_blank"
+              rel="noreferrer"
+              className="rounded border px-2 py-1 text-[10px]"
+              style={{ borderColor: CHAT_THEME.border, color: CHAT_THEME.low }}
+            >
+              {item.downloadLabel}
+            </a>
+          ) : null}
+        </div>
       </div>
     </div>
   );

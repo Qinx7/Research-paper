@@ -11,7 +11,7 @@ from ...models.paper import Paper
 from ...schemas.draft import PAPER_CHAPTER_LABELS
 from ...services.agent_workflow_record_service import AgentWorkflowDbRecorder
 from ...services.evidence_retrieval_service import build_evidence_context, retrieve_project_evidence
-from ...services.grounding_guard import validate_generated_chapter_grounding
+from ...skills import SkillExecutionContext, SkillExecutor, SkillRouter, build_default_skill_registry
 from ..orchestration import AgentNode, AgentNodeResult, AgentWorkflowRunner, AgentWorkflowState
 from ..paper_writing_agent import paper_writing_agent
 
@@ -92,20 +92,34 @@ class ChapterWriterNode(AgentNode):
 
     name = "chapter_writer"
 
-    def __init__(self, writing_agent=None):
+    def __init__(self, skill_executor: SkillExecutor, skill_router: SkillRouter, writing_agent=None):
+        self.skill_executor = skill_executor
+        self.skill_router = skill_router
         self.writing_agent = writing_agent or paper_writing_agent
 
     def run(self, state: AgentWorkflowState) -> AgentNodeResult:
-        result = self.writing_agent.generate_chapter(
-            chapter_key=state.input["chapter_key"],
-            outline=state.data.get("outline", {}),
-            outcomes_summary=state.data.get("outcomes_summary", ""),
-            literature_context=state.data.get("literature_context", ""),
-            existing_chapters=state.data.get("existing_chapters", {}),
+        skill_definition = self.skill_router.resolve(domain="paper", action="write_chapter")
+        skill_result = self.skill_executor.execute(
+            skill_definition.id,
+            {
+                "chapter_key": state.input["chapter_key"],
+                "outline": state.data.get("outline", {}),
+                "outcomes_summary": state.data.get("outcomes_summary", ""),
+                "literature_context": state.data.get("literature_context", ""),
+                "existing_chapters": state.data.get("existing_chapters", {}),
+            },
+            context=SkillExecutionContext(
+                user_id=state.user_id,
+                project_id=state.project_id,
+                draft_id=state.input.get("draft_id"),
+                state={"writing_agent": self.writing_agent},
+            ),
         )
+        result = skill_result.output
         return AgentNodeResult.success(
             data_delta={"chapter_result": result},
             metadata={
+                "skill_id": skill_result.skill_id,
                 "chapter_key": state.input["chapter_key"],
                 "citation_count": len(result.get("citations", []) or []),
                 "data_based": bool(result.get("data_based")),
@@ -118,17 +132,33 @@ class GroundingGuardNode(AgentNode):
 
     name = "grounding_guard"
 
+    def __init__(self, skill_executor: SkillExecutor, skill_router: SkillRouter):
+        self.skill_executor = skill_executor
+        self.skill_router = skill_router
+
     def run(self, state: AgentWorkflowState) -> AgentNodeResult:
-        validated = validate_generated_chapter_grounding(
-            chapter_key=state.input["chapter_key"],
-            result=state.data.get("chapter_result", {}),
-            outcomes=state.data.get("outcomes", []),
-            papers=state.data.get("papers", []),
-            evidence_items=state.data.get("evidence_items", []),
+        skill_definition = self.skill_router.resolve(domain="paper", action="validate_chapter")
+        skill_result = self.skill_executor.execute(
+            skill_definition.id,
+            {
+                "chapter_key": state.input["chapter_key"],
+                "result": state.data.get("chapter_result", {}),
+                "outcomes": state.data.get("outcomes", []),
+                "papers": state.data.get("papers", []),
+                "evidence_items": state.data.get("evidence_items", []),
+            },
+            context=SkillExecutionContext(
+                user_id=state.user_id,
+                project_id=state.project_id,
+                draft_id=state.input.get("draft_id"),
+                state={},
+            ),
         )
+        validated = skill_result.output
         return AgentNodeResult.success(
             data_delta={"validated_chapter_result": validated},
             metadata={
+                "skill_id": skill_result.skill_id,
                 "citations": validated.get("citations", []),
                 "data_based": bool(validated.get("data_based")),
             },
@@ -182,6 +212,9 @@ def run_generate_chapter_workflow(
     record_db=None,
 ) -> dict[str, Any]:
     """运行论文章节生成 workflow，并返回原章节接口兼容结果。"""
+    skill_registry = build_default_skill_registry()
+    skill_executor = SkillExecutor(skill_registry)
+    skill_router = SkillRouter(skill_registry)
     state = AgentWorkflowState(
         workflow_name="paper_chapter_generation",
         user_id=user_id,
@@ -199,8 +232,8 @@ def run_generate_chapter_workflow(
         [
             DraftContextNode(),
             EvidenceCollectNode(db=db, retrieve_evidence=retrieve_evidence),
-            ChapterWriterNode(writing_agent=writing_agent),
-            GroundingGuardNode(),
+            ChapterWriterNode(skill_executor=skill_executor, skill_router=skill_router, writing_agent=writing_agent),
+            GroundingGuardNode(skill_executor=skill_executor, skill_router=skill_router),
             DraftSaveNode(db=db),
         ],
         recorder=recorder,
@@ -244,6 +277,12 @@ def build_literature_context(*, papers: list, evidence_items: list[dict] | None 
         for paper in papers[:20]:
             authors = _format_authors(getattr(paper, "authors", None))
             parts.append(f"- {authors}. {getattr(paper, 'title', '')}. {getattr(paper, 'venue', '') or ''}, {getattr(paper, 'year', '') or ''}")
+        parts.append("")
+        parts.append("允许填写到 citations 的文献标题清单：")
+        for paper in papers[:20]:
+            title = str(getattr(paper, "title", "") or "").strip()
+            if title:
+                parts.append(f"- {title}")
     evidence_context = build_evidence_context(evidence_items)
     if evidence_context:
         parts.extend(["", evidence_context])

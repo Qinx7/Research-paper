@@ -126,12 +126,17 @@ def _summarize_node_input(state: AgentWorkflowState, node: AgentNode) -> dict:
 
 
 def _summarize_node_output(result: AgentNodeResult) -> dict:
-    return {
+    summary = {
         "data_delta": _summarize_value(result.data_delta),
         "evidence_delta_count": len(result.evidence_delta),
         "messages": result.messages[:5],
         "metadata": _summarize_value(result.metadata),
     }
+    if isinstance(result.metadata, dict):
+        for key, value in result.metadata.items():
+            if key not in summary:
+                summary[key] = _summarize_value(value)
+    return summary
 
 
 def _summarize_workflow_output(state: AgentWorkflowState) -> dict:

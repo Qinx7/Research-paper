@@ -47,6 +47,9 @@ export interface ProjectWorkspaceLinkedChunk {
   title: string;
   source_filename: string | null;
   source_type: string | null;
+  section_title?: string | null;
+  section_level?: number | null;
+  section_path?: string[];
   download_url: string;
   action_url: string;
   action_label: string;
@@ -126,6 +129,23 @@ export interface ProjectWorkspaceSnapshot {
     latest_proposal: ProjectWorkspaceDeliveryProposal | null;
     defense: ProjectWorkspaceDeliveryDefense;
   };
+}
+
+export interface ProjectDocumentSearchResult {
+  chunk_id: string;
+  outcome_id: string;
+  title: string;
+  source_filename: string | null;
+  source_type: string | null;
+  section_title?: string | null;
+  section_level?: number | null;
+  section_path?: string[];
+  content_excerpt: string;
+  download_url: string;
+  score: number;
+  score_reasons: string[];
+  action_label: string;
+  action_url: string;
 }
 
 // ========== 需求分析 ==========
@@ -477,6 +497,17 @@ export interface PPTStyle {
   is_default: boolean;
 }
 
+export interface HtmlDeckArtifact {
+  artifact_type: string;
+  title: string;
+  object_key: string;
+  filename: string;
+  theme: string;
+  slide_count: number;
+  preview_url: string;
+  download_url: string;
+}
+
 // ========== 开题报告 ==========
 
 export interface ProposalSection {
@@ -550,6 +581,23 @@ export interface OutcomeKnowledgeExtra {
   knowledge_chunk_count?: number;
   knowledge_error?: string | null;
   knowledge_indexed_at?: string | null;
+  knowledge_parser?: string | null;
+  knowledge_strategy_chain?: string[];
+  knowledge_used_ocr?: boolean;
+  knowledge_error_stage?: string | null;
+  document_kind?: string | null;
+  structured_fields?: string[];
+  structured_content?: {
+    title?: string;
+    abstract?: string;
+    references_text?: string;
+    references_list?: string[];
+  };
+  structured_confidence?: {
+    title?: string;
+    abstract?: string;
+    references?: string;
+  };
 }
 
 export interface OutcomeKnowledgeStatus {
@@ -559,6 +607,10 @@ export interface OutcomeKnowledgeStatus {
   message: string;
   error?: string | null;
   indexed_at?: string | null;
+  parser?: string | null;
+  strategy_chain?: string[];
+  used_ocr?: boolean;
+  error_stage?: string | null;
 }
 
 export interface SourceStatusInfo {
@@ -694,7 +746,7 @@ export interface AbstractResult {
   keywords_en: string[];
 }
 
-// ========== 答辩 PPT ==========
+// ========== 已停用：答辩 PPT（后端能力保留，当前前端主链路不使用） ==========
 
 export interface DefenseSlideInfo {
   page: number;

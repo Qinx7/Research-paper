@@ -3,26 +3,36 @@ import os
 import time
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from fastapi.responses import StreamingResponse
+from fastapi.responses import HTMLResponse, StreamingResponse
 from sqlalchemy.orm import Session
 
 from ..agents.ppt_agent import ppt_agent
 from ..core.database import get_db
+from ..models.draft import Draft
+from ..models.proposal import Proposal
 from ..models.user import User
-from ..schemas.ppt import GenerateProposalPPTRequest, PPTStyleOut
+from ..schemas.ppt import GenerateHtmlDeckRequest, GenerateProposalPPTRequest, HtmlDeckArtifactOut, PPTStyleOut
 from ..services.auth_dependency import get_current_user
 from ..services.generated_artifact_service import (
     can_access_object_key,
     register_generated_file,
     register_task_artifact,
 )
+from ..services.ownership import get_owned_draft, get_owned_proposal
 from ..services.upload_service import get_object_stream
+from ..services.web_deck_render_service import (
+    build_slides_outline_from_draft,
+    build_slides_outline_from_proposal,
+)
+from ..skills import SkillExecutionContext, SkillExecutor, SkillRouter, build_default_skill_registry
 from ..tasks.ppt_task import generate_ppt_task
 
 router = APIRouter(prefix="/ppt", tags=["ppt"])
 
 STORAGE_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "storage", "generated")
 STORAGE_DIR = os.path.abspath(STORAGE_DIR)
+skill_executor = SkillExecutor(build_default_skill_registry())
+skill_router = SkillRouter(build_default_skill_registry())
 
 
 @router.get("/list")
@@ -89,6 +99,106 @@ def generate_proposal_ppt(
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"PPT 生成失败: {str(e)}")
+
+
+@router.post("/html-deck", response_model=HtmlDeckArtifactOut)
+def generate_html_deck(
+    payload: GenerateHtmlDeckRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """生成实验型 HTML deck 产物。"""
+    try:
+        slides_outline = payload.slides_outline or []
+        deck_title = payload.deck_title or "HTML Deck"
+
+        if payload.draft_id:
+            draft = get_owned_draft(payload.draft_id, current_user, db)
+            slides_outline = build_slides_outline_from_draft(
+                title=draft.title,
+                draft_content=draft.content or {},
+            )
+            deck_title = payload.deck_title or draft.title
+        elif payload.proposal_id:
+            proposal = get_owned_proposal(payload.proposal_id, current_user, db)
+            slides_outline = build_slides_outline_from_proposal(
+                title=proposal.title,
+                proposal_content=proposal.content or {},
+            )
+            deck_title = payload.deck_title or proposal.title
+
+        if not slides_outline:
+            raise HTTPException(status_code=400, detail="必须提供 slides_outline、draft_id 或 proposal_id")
+
+        skill_definition = skill_router.resolve(domain="ppt", action="preview_html_deck")
+        result = skill_executor.execute(
+            skill_definition.id,
+            {
+                "deck_title": deck_title,
+                "slides_outline": slides_outline,
+                "theme": payload.theme,
+            },
+            context=SkillExecutionContext(
+                user_id=str(current_user.id),
+                metadata={
+                    "preview_base_url": "/api/ppt/html-deck/preview/",
+                    "download_base_url": "/api/ppt/html-deck/download/",
+                },
+            ),
+        )
+        artifact = result.output
+        register_generated_file(db, current_user.id, artifact["object_key"], "html_deck")
+        return HtmlDeckArtifactOut(**artifact)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"HTML deck 生成失败: {str(e)}")
+
+
+@router.get("/html-deck/preview/{object_key:path}")
+def preview_html_deck(
+    object_key: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """内联预览 HTML deck。"""
+    if not can_access_object_key(db, current_user.id, object_key):
+        raise HTTPException(status_code=404, detail="文件不存在")
+
+    stream_result = get_object_stream(object_key)
+    if stream_result is None:
+        raise HTTPException(status_code=404, detail="文件不存在")
+
+    stream, _, _ = stream_result
+    html_text = stream.read().decode("utf-8")
+    try:
+        stream.close()
+    except Exception:
+        pass
+    return HTMLResponse(content=html_text)
+
+
+@router.get("/html-deck/download/{object_key:path}")
+def download_html_deck(
+    object_key: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """下载 HTML deck 文件。"""
+    if not can_access_object_key(db, current_user.id, object_key):
+        raise HTTPException(status_code=404, detail="文件不存在")
+
+    stream_result = get_object_stream(object_key)
+    if stream_result is None:
+        raise HTTPException(status_code=404, detail="文件不存在")
+
+    stream, size, content_type = stream_result
+    return StreamingResponse(
+        stream,
+        media_type=content_type,
+        headers={
+            "Content-Disposition": f'attachment; filename="{os.path.basename(object_key)}"',
+            "Content-Length": str(size),
+        },
+    )
 
 
 @router.get("/download/{object_key:path}")

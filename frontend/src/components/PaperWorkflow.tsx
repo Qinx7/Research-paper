@@ -4,13 +4,15 @@ import React, { useState, useEffect, useCallback } from "react";
 import * as api from "../lib/api";
 import type {
   Draft, DraftOutline, ChapterResult, AbstractResult,
-  PPTStyle, DefensePPTResponse, DefenseScript,
   ComplianceResult, ComplianceIssue,
+  ProjectWorkspaceLinkedChunk,
+  ProjectWorkspaceLinkedOutcome,
+  ProjectWorkspaceSnapshot,
 } from "../lib/types";
-import type { TaskStatus } from "../lib/api";
 import OutcomeManager from "./OutcomeManager";
 import StageWrapper from "./StageWrapper";
 import { buildEditedChapterPayload, getDraftCompletionSummary } from "@/lib/draftKnowledge";
+import { findChapterKnowledge, getChapterKnowledgeActions } from "@/lib/projectKnowledge.mjs";
 
 // ========== 章节映射 ==========
 
@@ -35,7 +37,6 @@ const CHAPTER_LABELS: Record<string, string> = {
 const WORKFLOW_STAGES: Record<number, string> = {
   1: "成果管理",
   2: "论文写作",
-  3: "答辩 PPT",
 };
 
 // ========== 快速步骤指示器 ==========
@@ -45,7 +46,7 @@ function WorkflowStepIndicator({ currentStep, onStepClick }: {
 }) {
   return (
     <div className="flex items-center justify-center gap-2 mb-8">
-      {[1, 2, 3].map((step) => (
+      {[1, 2].map((step) => (
         <React.Fragment key={step}>
           <button
             onClick={() => onStepClick(step)}
@@ -59,7 +60,7 @@ function WorkflowStepIndicator({ currentStep, onStepClick }: {
           >
             {step < currentStep ? "✓" : step}
           </button>
-          {step < 3 && <div className="w-12 h-0.5 bg-gray-200" />}
+          {step < 2 && <div className="w-12 h-0.5 bg-gray-200" />}
         </React.Fragment>
       ))}
       <span className="ml-3 text-sm text-gray-500">{WORKFLOW_STAGES[currentStep]}</span>
@@ -74,6 +75,15 @@ interface Props {
   projectId: string;
   onBack?: () => void;
 }
+
+type ChapterKnowledgeActionItem = {
+  key: string;
+  title: string;
+  subtitle: string;
+  href: string;
+  actionLabel: string;
+  external: boolean;
+};
 
 export default function PaperWorkflow({ projectId, onBack }: Props) {
   const [step, setStep] = useState(1);
@@ -99,14 +109,7 @@ export default function PaperWorkflow({ projectId, onBack }: Props) {
   // 摘要
   const [abstractGenerating, setAbstractGenerating] = useState(false);
   const [abstract, setAbstract] = useState<AbstractResult | null>(null);
-
-  // 答辩 PPT
-  const [pptStyles, setPptStyles] = useState<PPTStyle[]>([]);
-  const [pptStyleId, setPptStyleId] = useState("academic_blue");
-  const [pptGenerating, setPptGenerating] = useState(false);
-  const [pptResult, setPptResult] = useState<DefensePPTResponse | null>(null);
-  const [defenseScript, setDefenseScript] = useState<DefenseScript | null>(null);
-  const [scriptLoading, setScriptLoading] = useState(false);
+  const [workspaceSnapshot, setWorkspaceSnapshot] = useState<ProjectWorkspaceSnapshot | null>(null);
 
   // 合规检查
   const [complianceResult, setComplianceResult] = useState<ComplianceResult | null>(null);
@@ -127,9 +130,22 @@ export default function PaperWorkflow({ projectId, onBack }: Props) {
     } catch { /* 忽略 */ }
   }, [projectId]);
 
+  const refreshWorkspaceSnapshot = useCallback(async (draftId?: string | null) => {
+    try {
+      const snapshot = await api.getProjectWorkspace(projectId, draftId ?? null);
+      setWorkspaceSnapshot(snapshot);
+    } catch {
+      setWorkspaceSnapshot(null);
+    }
+  }, [projectId]);
+
   useEffect(() => {
     loadDrafts();
   }, [loadDrafts]);
+
+  useEffect(() => {
+    void refreshWorkspaceSnapshot(activeDraft?.id);
+  }, [activeDraft?.id, refreshWorkspaceSnapshot]);
 
   // ---- 阶段 2: 论文写作 ----
 
@@ -144,6 +160,7 @@ export default function PaperWorkflow({ projectId, onBack }: Props) {
       setActiveDraft(draft);
       setOutline(null);
       setChapterResult(null);
+      await refreshWorkspaceSnapshot(draft.id);
       await loadDrafts();
     } catch (e: unknown) {
       setDraftError(e instanceof Error ? e.message : "创建失败");
@@ -160,6 +177,7 @@ export default function PaperWorkflow({ projectId, onBack }: Props) {
       setActiveDraft(draft);
       setOutline(draft.outline || null);
       setChapterResult(null);
+      await refreshWorkspaceSnapshot(draft.id);
     } catch (e: unknown) {
       setDraftError(e instanceof Error ? e.message : "加载失败");
     } finally {
@@ -177,6 +195,7 @@ export default function PaperWorkflow({ projectId, onBack }: Props) {
       // 刷新草稿以获取更新后的 outline
       const updated = await api.getDraft(activeDraft.id);
       setActiveDraft(updated);
+      await refreshWorkspaceSnapshot(updated.id);
     } catch (e: unknown) {
       setDraftError(e instanceof Error ? e.message : "大纲生成失败");
     } finally {
@@ -196,6 +215,7 @@ export default function PaperWorkflow({ projectId, onBack }: Props) {
       // 刷新草稿
       const updated = await api.getDraft(activeDraft.id);
       setActiveDraft(updated);
+      await refreshWorkspaceSnapshot(updated.id);
     } catch (e: unknown) {
       setDraftError(e instanceof Error ? e.message : "章节生成失败");
     } finally {
@@ -215,6 +235,7 @@ export default function PaperWorkflow({ projectId, onBack }: Props) {
         setChapterResult(result);
         const updated = await api.getDraft(activeDraft.id);
         setActiveDraft(updated);
+        await refreshWorkspaceSnapshot(updated.id);
       } catch {
         setDraftError(`章节 ${CHAPTER_LABELS[key]} 生成失败，已跳过`);
       }
@@ -240,6 +261,7 @@ export default function PaperWorkflow({ projectId, onBack }: Props) {
       await api.updateDraft(activeDraft.id, { content });
       const updated = await api.getDraft(activeDraft.id);
       setActiveDraft(updated);
+      await refreshWorkspaceSnapshot(updated.id);
       setEditingChapter(null);
     } catch {
       setDraftError("保存失败");
@@ -256,55 +278,6 @@ export default function PaperWorkflow({ projectId, onBack }: Props) {
       setDraftError("摘要生成失败");
     } finally {
       setAbstractGenerating(false);
-    }
-  };
-
-  // ---- 阶段 3: 答辩 PPT ----
-
-  useEffect(() => {
-    if (step === 3) {
-      api.listDefensePPTStyles().then(setPptStyles).catch(() => {});
-    }
-  }, [step]);
-
-  const handleGenerateDefensePPT = async () => {
-    if (!activeDraft) return;
-    setPptGenerating(true);
-    setError(null);
-    try {
-      const { task_id } = await api.generateDefensePPTAsync({
-        draft_id: activeDraft.id,
-        template: pptStyleId,
-      });
-      await new Promise<void>((resolve, reject) => {
-        api.pollUntilDone(task_id, (status: TaskStatus) => {
-          if (status.ready) {
-            if (status.result) {
-              setPptResult(status.result as unknown as DefensePPTResponse);
-              resolve();
-            } else {
-              reject(new Error(status.error || "生成失败"));
-            }
-          }
-        });
-      });
-    } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : "答辩 PPT 生成失败");
-    } finally {
-      setPptGenerating(false);
-    }
-  };
-
-  const handleGenerateScript = async () => {
-    if (!activeDraft) return;
-    setScriptLoading(true);
-    try {
-      const result = await api.getDefenseScript(activeDraft.id);
-      setDefenseScript(result);
-    } catch {
-      setError("演讲稿生成失败");
-    } finally {
-      setScriptLoading(false);
     }
   };
 
@@ -349,15 +322,6 @@ export default function PaperWorkflow({ projectId, onBack }: Props) {
       );
     } catch {
       setError("导出失败");
-    }
-  };
-
-  const handleDownloadDefensePPT = async () => {
-    if (!pptResult?.download_url) return;
-    try {
-      await api.downloadWithAuth(pptResult.download_url, pptResult.filename || "defense.pptx");
-    } catch {
-      setError("PPT 下载失败");
     }
   };
 
@@ -598,6 +562,8 @@ export default function PaperWorkflow({ projectId, onBack }: Props) {
                   const selectedIssues = selectedCompliance?.issues || [];
                   const unconfirmedCount = selectedIssues.filter((i) => !i.user_action && i.severity !== "info").length;
                   const aiRunning = complianceAiLoading.has(selectedKey);
+                  const selectedChapterKnowledge = findChapterKnowledge(workspaceSnapshot, selectedKey);
+                  const chapterKnowledgeActions = getChapterKnowledgeActions(selectedChapterKnowledge);
 
                   return (
                     <>
@@ -722,6 +688,38 @@ export default function PaperWorkflow({ projectId, onBack }: Props) {
                             <SuggestionCard text="避免生成未验证的统计值、实验结果或引用条目。" />
                           </WritingSidePanel>
 
+                          <WritingSidePanel title="当前章节资料依据">
+                            {chapterKnowledgeActions.outcomes.length ? (
+                              chapterKnowledgeActions.outcomes.map((item: ChapterKnowledgeActionItem, index: number) => (
+                                <KnowledgeActionCard key={item.key} prefix={`成果 ${index + 1}`} item={item} />
+                              ))
+                            ) : chapterKnowledgeActions.chunks.length ? (
+                              chapterKnowledgeActions.chunks.map((item: ChapterKnowledgeActionItem, index: number) => (
+                                <KnowledgeActionCard key={item.key} prefix={`资料 ${index + 1}`} item={item} />
+                              ))
+                            ) : (
+                              <p className="text-[11.5px] leading-5 text-[#9e9282]">
+                                当前章节还没有明确命中已上传资料。生成章节或补充资料命名后，这里会显示本章使用到的成果材料。
+                              </p>
+                            )}
+
+                            {chapterKnowledgeActions.papers.length ? (
+                              <div className="mt-3 border-t border-[#ddd4c4] pt-3">
+                                {chapterKnowledgeActions.papers.slice(0, 3).map((item: ChapterKnowledgeActionItem, index: number) => (
+                                  <KnowledgeActionCard key={item.key} prefix={`文献 ${index + 1}`} item={item} />
+                                ))}
+                              </div>
+                            ) : null}
+
+                            {chapterKnowledgeActions.notes.length ? (
+                              <div className="mt-3 border-t border-[#ddd4c4] pt-3">
+                                {chapterKnowledgeActions.notes.slice(0, 3).map((item: ChapterKnowledgeActionItem, index: number) => (
+                                  <KnowledgeActionCard key={item.key} prefix={`证据 ${index + 1}`} item={item} />
+                                ))}
+                              </div>
+                            ) : null}
+                          </WritingSidePanel>
+
                           <WritingSidePanel title="生成与检查">
                             <button
                               onClick={handleGenerateAbstract}
@@ -808,115 +806,6 @@ export default function PaperWorkflow({ projectId, onBack }: Props) {
         </div>
       )}
 
-      {/* ========== 阶段 3：答辩 PPT ========== */}
-      {step === 3 && (
-        <div className="space-y-6">
-          {error && (
-            <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg text-sm">
-              {error}
-              <button className="ml-3 underline" onClick={() => setError(null)}>关闭</button>
-            </div>
-          )}
-
-          {/* 前提检查 */}
-          {!activeDraft ? (
-            <div className="bg-yellow-50 border border-yellow-200 rounded-xl p-6 text-center">
-              <p className="text-yellow-800 mb-3">请先在"论文写作"阶段完成论文草稿。</p>
-              <button onClick={() => setStep(2)} className="px-5 py-2 bg-yellow-600 text-white rounded-lg text-sm">
-                返回论文写作
-              </button>
-            </div>
-          ) : (
-            <>
-              {/* 风格选择 */}
-              <div className="bg-white border border-gray-200 rounded-xl p-5">
-                <h3 className="font-semibold text-gray-800 mb-4">选择 PPT 风格</h3>
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                  {(pptStyles.length > 0 ? pptStyles : [
-                    { id: "academic_blue", name: "学术蓝", description: "稳重正式", scene: "默认推荐", is_default: true },
-                    { id: "minimal_gray", name: "极简灰", description: "留白更多", scene: "论文型汇报", is_default: false },
-                    { id: "tech_dark", name: "科技深色", description: "深底高对比", scene: "技术展示", is_default: false },
-                    { id: "vibrant_orange_green", name: "活力橙绿", description: "配色鲜明", scene: "应用导向", is_default: false },
-                  ] as PPTStyle[]).map((s) => (
-                    <button
-                      key={s.id}
-                      onClick={() => setPptStyleId(s.id)}
-                      className={`border-2 rounded-xl p-3 text-left transition-colors ${
-                        pptStyleId === s.id ? "border-blue-500 bg-blue-50" : "border-gray-200 hover:border-gray-300"
-                      }`}
-                    >
-                      <div className="font-medium text-sm text-gray-800">{s.name}</div>
-                      <div className="text-xs text-gray-500 mt-1">{s.description}</div>
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              {/* 生成 */}
-              <div className="flex gap-3 flex-wrap">
-                <button
-                  onClick={handleGenerateDefensePPT}
-                  disabled={pptGenerating}
-                  className="px-6 py-3 bg-blue-600 text-white rounded-xl font-medium hover:bg-blue-700 disabled:opacity-50"
-                >
-                  {pptGenerating ? "正在生成答辩 PPT..." : "生成答辩 PPT"}
-                </button>
-                <button
-                  onClick={handleGenerateScript}
-                  disabled={scriptLoading}
-                  className="px-6 py-3 bg-gray-100 text-gray-700 rounded-xl font-medium hover:bg-gray-200 disabled:opacity-50"
-                >
-                  {scriptLoading ? "生成中..." : "生成演讲稿"}
-                </button>
-              </div>
-
-              {/* PPT 结果 */}
-              {pptResult && (
-                <div className="bg-green-50 border border-green-200 rounded-xl p-5">
-                  <h3 className="font-semibold text-green-900 mb-3">答辩 PPT 已生成</h3>
-                  <div className="space-y-2 text-sm text-green-800">
-                    <p>风格：{pptResult.style_name} · 共 {pptResult.slide_count} 页</p>
-                    {!pptResult.has_real_data && (
-                      <p className="text-yellow-700">提示：论文暂无真实实验数据，实验页将展示设计方案和预期结果。</p>
-                    )}
-                  </div>
-                  {pptResult.download_url && (
-                    <button
-                      onClick={handleDownloadDefensePPT}
-                      className="inline-block mt-3 px-5 py-2 bg-green-600 text-white rounded-lg text-sm hover:bg-green-700"
-                    >
-                      下载 PPTX
-                    </button>
-                  )}
-                </div>
-              )}
-
-              {/* 演讲稿 */}
-              {defenseScript && (
-                <div className="bg-white border border-gray-200 rounded-xl p-5">
-                  <h3 className="font-semibold text-gray-800 mb-3">
-                    答辩演讲稿（约 {defenseScript.total_duration_minutes} 分钟）
-                  </h3>
-                  <div className="space-y-3 max-h-96 overflow-y-auto">
-                    {defenseScript.slides.map((s) => (
-                      <div key={s.page} className="border-b border-gray-100 pb-2">
-                        <div className="flex items-center justify-between mb-1">
-                          <span className="text-xs font-medium text-gray-500">
-                            第 {s.page} 页 — {s.title}
-                          </span>
-                          <span className="text-xs text-gray-400">{s.duration_seconds}秒</span>
-                        </div>
-                        <p className="text-sm text-gray-700">{s.notes}</p>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-            </>
-          )}
-        </div>
-      )}
-
       {/* 底部导航 */}
       <div className="flex justify-between mt-8 pt-6 border-t border-gray-200">
         <button
@@ -927,8 +816,8 @@ export default function PaperWorkflow({ projectId, onBack }: Props) {
           ← 上一步
         </button>
         <button
-          onClick={() => setStep(Math.min(3, step + 1))}
-          disabled={step === 3}
+          onClick={() => setStep(Math.min(2, step + 1))}
+          disabled={step === 2}
           className="px-5 py-2 bg-blue-600 text-white rounded-lg text-sm hover:bg-blue-700 disabled:opacity-50"
         >
           下一步 →
@@ -953,6 +842,43 @@ function SuggestionCard({ text }: { text: string }) {
   return (
     <div className="mb-2 rounded-lg border border-[#ddd4c4] bg-[#f7f4ec] px-3 py-2 last:mb-0">
       <p className="text-[11.5px] leading-5 text-[#3a3020]">{text}</p>
+    </div>
+  );
+}
+
+function KnowledgeActionCard({
+  prefix,
+  item,
+}: {
+  prefix: string;
+  item: {
+    title: string;
+    subtitle: string;
+    sectionTitle?: string;
+    href: string;
+    actionLabel: string;
+    external: boolean;
+  };
+}) {
+  return (
+    <div className="mb-2 rounded-lg border border-[#ddd4c4] bg-[#f7f4ec] px-3 py-2 text-[11px] leading-5 last:mb-0">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="font-medium text-[#1a1612]">{prefix}：{item.title}</div>
+          <div className="mt-1 text-[#9e9282]">{item.subtitle}</div>
+          {item.sectionTitle ? (
+            <div className="mt-1 text-[#9e9282]">所属章节：{item.sectionTitle}</div>
+          ) : null}
+        </div>
+        <a
+          href={item.href}
+          target={item.external ? "_blank" : undefined}
+          rel={item.external ? "noreferrer" : undefined}
+          className="shrink-0 rounded border border-[#ddd4c4] bg-[#ede8da] px-2 py-1 text-[10px] text-[#5c5242]"
+        >
+          {item.actionLabel}
+        </a>
+      </div>
     </div>
   );
 }

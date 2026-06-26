@@ -607,7 +607,7 @@ def get_defense_outline(
             has_real_data = True
             break
 
-    # 15 页答辩 PPT 结构
+    # 14 页答辩 PPT 结构
     slides = [
         DefenseSlideInfo(page=1, title="题目页", content_type="cover", description=draft.title),
         DefenseSlideInfo(page=2, title="研究背景与意义", content_type="content", description="选题背景和研究意义"),
@@ -623,8 +623,7 @@ def get_defense_outline(
         DefenseSlideInfo(page=11, title="创新点", content_type="card_list", description="2-3个创新点"),
         DefenseSlideInfo(page=12, title="总结与展望", content_type="content", description="研究总结和未来方向"),
         DefenseSlideInfo(page=13, title="研究成果", content_type="numbered_list", description="发表论文/系统/数据集"),
-        DefenseSlideInfo(page=14, title="答辩问题预测", content_type="numbered_list", description="可能被问的问题"),
-        DefenseSlideInfo(page=15, title="致谢", content_type="ending", description="感谢导师和团队"),
+        DefenseSlideInfo(page=14, title="致谢", content_type="ending", description="感谢导师和团队"),
     ]
     return DefensePPTOutline(slides=slides, total_slides=len(slides), has_real_data=has_real_data)
 

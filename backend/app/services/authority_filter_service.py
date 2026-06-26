@@ -44,6 +44,7 @@ PKU_CORE_JOURNAL_WHITELIST = {
     "教育研究",
     "高等教育研究",
 }
+PKU_CORE_NORMALIZED_WHITELIST: set[str] = set()
 
 
 def evaluate_paper_authority(paper: PaperResult) -> AuthorityEvaluation:
@@ -70,7 +71,7 @@ def evaluate_paper_authority(paper: PaperResult) -> AuthorityEvaluation:
         reasons.append("命中 ACM 出版物名称或 ACM Digital Library 链接")
 
     venue = (paper.venue or "").strip()
-    if venue and _normalize_text(venue) in {_normalize_text(item) for item in PKU_CORE_JOURNAL_WHITELIST}:
+    if venue and _normalize_journal_name(venue) in _normalized_pku_core_whitelist():
         tags.append("pku_core")
         reasons.append(f"期刊《{venue}》命中本地北大核心白名单")
 
@@ -102,7 +103,7 @@ def evaluate_paper_authority(paper: PaperResult) -> AuthorityEvaluation:
 def authority_display_flags(evaluation: AuthorityEvaluation) -> list[str]:
     """转换为前端可直接展示的标签文本。"""
     flags = [AUTHORITY_LABELS.get(tag, tag) for tag in evaluation.tags]
-    flags.extend(f"{AUTHORITY_LABELS.get(tag, tag)}待核验" for tag in evaluation.pending_tags)
+    flags.extend(f"待核验 {AUTHORITY_LABELS.get(tag, tag)}" for tag in evaluation.pending_tags)
     return flags
 
 
@@ -159,6 +160,8 @@ def _paper_text(paper: PaperResult) -> str:
 
 
 def _matches_ieee(*, venue_text: str, url_text: str, doi_text: str) -> bool:
+    if doi_text.startswith("10.1109/"):
+        return True
     return any(
         marker in venue_text or marker in url_text or marker in doi_text
         for marker in [
@@ -168,11 +171,14 @@ def _matches_ieee(*, venue_text: str, url_text: str, doi_text: str) -> bool:
             "ieee access",
             "proceedings of ieee",
             "ieee conference",
+            "10.1109/",
         ]
     ) or bool(re.search(r"\bieee\b", venue_text))
 
 
 def _matches_acm(*, venue_text: str, url_text: str, doi_text: str) -> bool:
+    if doi_text.startswith("10.1145/"):
+        return True
     return any(
         marker in venue_text or marker in url_text or marker in doi_text
         for marker in [
@@ -181,6 +187,7 @@ def _matches_acm(*, venue_text: str, url_text: str, doi_text: str) -> bool:
             "proceedings of the acm",
             "acm transactions",
             "association for computing machinery",
+            "10.1145/",
         ]
     ) or bool(re.search(r"\bacm\b", venue_text))
 
@@ -198,6 +205,20 @@ def _detect_pending_authority_tags(text: str) -> list[str]:
 
 def _normalize_text(value: str) -> str:
     return re.sub(r"\s+", "", value.strip().lower())
+
+
+def _normalize_journal_name(value: str) -> str:
+    normalized = value.strip().lower()
+    normalized = normalized.replace("《", "").replace("》", "")
+    normalized = re.sub(r"[·•\-_:/\\,.;，。；：\s]+", "", normalized)
+    normalized = re.sub(r"[（(][^)）]*[)）]$", "", normalized)
+    return normalized
+
+
+def _normalized_pku_core_whitelist() -> set[str]:
+    if not PKU_CORE_NORMALIZED_WHITELIST:
+        PKU_CORE_NORMALIZED_WHITELIST.update(_normalize_journal_name(item) for item in PKU_CORE_JOURNAL_WHITELIST)
+    return PKU_CORE_NORMALIZED_WHITELIST
 
 
 def _dedupe(items: list[str]) -> list[str]:

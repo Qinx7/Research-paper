@@ -13,16 +13,16 @@ class ProjectWorkspaceApiTests(unittest.TestCase):
         snapshot = {"stats": {"outcomes_total": 2}}
 
         original_get_owned_project = getattr(projects_api, "get_owned_project")
-        original_load_snapshot = getattr(projects_api, "load_project_workspace_snapshot", None)
+        original_load_snapshot = getattr(projects_api, "load_project_workspace_snapshot_for_draft", None)
         projects_api.get_owned_project = lambda pid, user, db_session: SimpleNamespace(id=pid, user_id=user.id)
-        projects_api.load_project_workspace_snapshot = lambda db_session, pid: snapshot
+        projects_api.load_project_workspace_snapshot_for_draft = lambda db_session, pid, draft_id: snapshot
 
         try:
             result = projects_api.get_project_workspace(project_id, current_user=current_user, db=db)
         finally:
             projects_api.get_owned_project = original_get_owned_project
             if original_load_snapshot is not None:
-                projects_api.load_project_workspace_snapshot = original_load_snapshot
+                projects_api.load_project_workspace_snapshot_for_draft = original_load_snapshot
 
         self.assertEqual(result, snapshot)
 
