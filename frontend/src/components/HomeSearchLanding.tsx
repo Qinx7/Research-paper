@@ -99,6 +99,15 @@ const DEFAULT_FILTERS: LiteratureQualityFilters = {
   min_citation_count: 0,
 };
 
+const SEARCH_TRANSITION_STEPS = [
+  { title: "解析研究问题", desc: "抽取主题、对象、方法与语种偏好。" },
+  { title: "匹配检索来源", desc: "组合中文库、英文学术库和质量筛选条件。" },
+  { title: "筛选高相关结果", desc: "按相关性、引用量与来源质量整理文献。" },
+  { title: "生成结果摘要", desc: "汇总来源分布，并承接后续研究入口。" },
+];
+
+const wait = (ms: number) => new Promise((resolve) => window.setTimeout(resolve, ms));
+
 export default function HomeSearchLanding() {
   const router = useRouter();
   const { user, loading: authLoading, logout } = useAuth();
@@ -112,6 +121,8 @@ export default function HomeSearchLanding() {
   const [searchDiagnostics, setSearchDiagnostics] = useState<SearchDiagnostics | null>(null);
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [filters, setFilters] = useState<LiteratureQualityFilters>({ ...DEFAULT_FILTERS });
+  const [searchTransitionStep, setSearchTransitionStep] = useState<number | null>(null);
+  const [transitionQuery, setTransitionQuery] = useState("");
   const [currentTaskId, setCurrentTaskId] = useState<string | null>(null);
   const [projects, setProjects] = useState<Project[]>([]);
   const [selectedProjectId, setSelectedProjectId] = useState<string>("");
@@ -145,6 +156,13 @@ export default function HomeSearchLanding() {
 
   const hasSearched = Boolean(activeQuery);
   const sourceSummary = useMemo(() => summarizeSources(papers), [papers]);
+  const researchHref = lastSavedDirectionMeta
+    ? `/research?project_id=${lastSavedDirectionMeta.projectId}&direction_id=${lastSavedDirectionMeta.directionId}`
+    : selectedProjectId
+      ? `/research?project_id=${selectedProjectId}`
+      : "/research";
+  const writingHref = selectedProjectId ? `/writing?project_id=${selectedProjectId}` : "/writing";
+  const projectsHref = "/projects";
   const shellColumns = hasSearched && referencesOpen
     ? sidebarCollapsed
       ? "lg:grid-cols-[72px_minmax(0,1fr)_420px]"
@@ -431,12 +449,20 @@ export default function HomeSearchLanding() {
     setQuery(trimmed);
     setMode(nextMode);
     setScope(nextScope);
-    setActiveQuery(trimmed);
     setLoading(true);
     setError(null);
     setSavedDirectionTitles([]);
     setDirectionSaveMessage(null);
     setReferencesOpen(true);
+    setTransitionQuery(trimmed);
+    setSearchTransitionStep(0);
+
+    const transition = (async () => {
+      for (let index = 0; index < SEARCH_TRANSITION_STEPS.length; index += 1) {
+        setSearchTransitionStep(index);
+        await wait(index === SEARCH_TRANSITION_STEPS.length - 1 ? 420 : 360);
+      }
+    })();
 
     try {
       const keywordPayload = buildKeywordPayload(trimmed, nextScope);
@@ -475,7 +501,11 @@ export default function HomeSearchLanding() {
       setError(err instanceof Error ? err.message : "检索失败，请稍后重试");
       rememberSearchHistory(trimmed, nextMode, nextScope, filters);
     } finally {
+      await transition;
+      setActiveQuery(trimmed);
       setLoading(false);
+      setSearchTransitionStep(null);
+      setTransitionQuery("");
     }
   };
 
@@ -495,6 +525,8 @@ export default function HomeSearchLanding() {
     setDirectionSaveMessage(null);
     setReferencesOpen(false);
     setEntryMenuOpen(false);
+    setSearchTransitionStep(null);
+    setTransitionQuery("");
   };
 
   const handleSelectSearchHistory = (item: SearchHistoryItem) => {
@@ -666,6 +698,8 @@ export default function HomeSearchLanding() {
               filters={filters}
               filtersOpen={filtersOpen}
               loading={loading}
+              transitionStep={searchTransitionStep}
+              transitionQuery={transitionQuery}
               onQueryChange={setQuery}
               onModeChange={setMode}
               onScopeChange={setScope}
@@ -675,9 +709,9 @@ export default function HomeSearchLanding() {
               onPickSuggestion={submitSearch}
               entryMenuOpen={entryMenuOpen}
               onToggleEntries={() => setEntryMenuOpen((current) => !current)}
-              onGoResearch={() => router.push("/research")}
-              onGoWriting={() => router.push("/writing")}
-              onGoProjects={() => router.push("/projects")}
+              researchHref={researchHref}
+              writingHref={writingHref}
+              projectsHref={projectsHref}
               onLogin={() => router.push("/login")}
               user={user}
             />
@@ -727,9 +761,9 @@ export default function HomeSearchLanding() {
               onToggleSidebar={() => setSidebarCollapsed((current) => !current)}
               entryMenuOpen={entryMenuOpen}
               onToggleEntries={() => setEntryMenuOpen((current) => !current)}
-              onGoResearch={() => router.push("/research")}
-              onGoWriting={() => router.push("/writing")}
-              onGoProjects={() => router.push("/projects")}
+              researchHref={researchHref}
+              writingHref={writingHref}
+              projectsHref={projectsHref}
               onSendChat={handleSendChat}
             />
           )}
@@ -944,6 +978,8 @@ function HomeHero({
   filters,
   filtersOpen,
   loading,
+  transitionStep,
+  transitionQuery,
   user,
   onQueryChange,
   onModeChange,
@@ -954,9 +990,9 @@ function HomeHero({
   onPickSuggestion,
   entryMenuOpen,
   onToggleEntries,
-  onGoResearch,
-  onGoWriting,
-  onGoProjects,
+  researchHref,
+  writingHref,
+  projectsHref,
   onLogin,
 }: {
   query: string;
@@ -965,6 +1001,8 @@ function HomeHero({
   filters: LiteratureQualityFilters;
   filtersOpen: boolean;
   loading: boolean;
+  transitionStep: number | null;
+  transitionQuery: string;
   user: unknown;
   onQueryChange: (query: string) => void;
   onModeChange: (mode: ResearchMode) => void;
@@ -975,105 +1013,204 @@ function HomeHero({
   onPickSuggestion: (query: string) => void;
   entryMenuOpen: boolean;
   onToggleEntries: () => void;
-  onGoResearch: () => void;
-  onGoWriting: () => void;
-  onGoProjects: () => void;
+  researchHref: string;
+  writingHref: string;
+  projectsHref: string;
   onLogin: () => void;
 }) {
   return (
-    <div className="relative flex h-screen flex-col overflow-y-auto px-5 py-4 md:px-10">
-      <header className="mx-auto flex h-14 w-full max-w-5xl items-center justify-end">
-        <div className="relative flex items-center gap-3">
-          <button
-            type="button"
-            onClick={onToggleEntries}
-            className="inline-flex items-center gap-2 rounded-2xl border border-[#dbe2e8] bg-white px-4 py-2.5 text-sm font-black text-[#1d232b] transition-colors hover:bg-[#f7fafc]"
-            title="其他页面入口"
-          >
-            <IconGrid />
-            <span>其他入口</span>
+    <div className="relative h-full overflow-hidden bg-[linear-gradient(180deg,#fcfdff_0%,#f5f9ff_56%,#eef5ff_100%)] px-4 py-4 text-[#152540] md:px-8">
+      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_12%_18%,rgba(73,136,255,0.11),transparent_21%),radial-gradient(circle_at_88%_24%,rgba(118,178,255,0.1),transparent_19%)]" />
+      <div className="pointer-events-none absolute bottom-[8vh] left-[-4vw] h-[18vh] w-[46vw] opacity-45 [clip-path:polygon(0_74%,18%_52%,34%_63%,48%_43%,62%_56%,76%_34%,90%_46%,100%_24%,100%_100%,0_100%)] bg-[linear-gradient(180deg,transparent_0%,rgba(84,140,255,0.07)_100%)]" />
+      <div className="pointer-events-none absolute bottom-[8vh] right-[-4vw] h-[18vh] w-[46vw] scale-x-[-1] opacity-45 [clip-path:polygon(0_74%,18%_52%,34%_63%,48%_43%,62%_56%,76%_34%,90%_46%,100%_24%,100%_100%,0_100%)] bg-[linear-gradient(180deg,transparent_0%,rgba(84,140,255,0.07)_100%)]" />
+
+      <div className="relative z-10 mx-auto flex h-full w-full max-w-[1420px] flex-col">
+        <header className="flex h-14 shrink-0 items-center justify-between gap-4">
+          <button type="button" onClick={() => onQueryChange("")} className="flex min-w-0 items-center gap-3 text-left" title="回到首页检索">
+            <span className="grid h-10 w-10 shrink-0 place-items-center rounded-[14px] bg-[linear-gradient(145deg,#4e91ff_0%,#2f76eb_100%)] text-white shadow-[0_12px_28px_rgba(47,126,247,0.22)]">
+              <IconBookmark />
+            </span>
+            <span className="min-w-0">
+              <span className="block text-base font-black tracking-[-0.02em] text-[#152540]">Paper Search</span>
+              <span className="block text-[11px] font-bold text-[#7b90ad]">学术文献检索工作台</span>
+            </span>
           </button>
-          {!user ? (
+
+          <div className="relative flex items-center gap-3">
             <button
               type="button"
-              onClick={onLogin}
-              className="rounded-2xl bg-[#1592e6] px-5 py-3 text-sm font-bold text-white shadow-[0_14px_30px_rgba(21,146,230,0.22)] transition-colors hover:bg-[#087bc8]"
+              onClick={onToggleEntries}
+              className="inline-flex h-10 items-center gap-2 rounded-[13px] border border-[#c7d9f1] bg-white/80 px-4 text-sm font-black text-[#1e67da] shadow-[0_8px_24px_rgba(47,126,247,0.07)] backdrop-blur transition-colors hover:bg-white"
+              title="其他页面入口"
             >
-              Sign up
+              <IconGrid />
+              <span>其他入口</span>
             </button>
-          ) : null}
-        </div>
+            {!user ? (
+              <button
+                type="button"
+                onClick={onLogin}
+                className="hidden h-10 rounded-[13px] border border-[#c7d9f1] bg-white/80 px-4 text-sm font-black text-[#1e67da] shadow-[0_8px_24px_rgba(47,126,247,0.07)] transition-colors hover:bg-white md:inline-flex md:items-center"
+              >
+                登录 / 注册
+              </button>
+            ) : null}
+
+            <div className={`absolute right-0 top-[48px] z-[220] w-56 rounded-[18px] border border-[#d8e5f7] bg-white/95 p-2 shadow-[0_20px_52px_rgba(31,88,170,0.14)] backdrop-blur transition-all ${entryMenuOpen ? "pointer-events-auto translate-y-0 opacity-100" : "pointer-events-none -translate-y-2 opacity-0"}`}>
+              <EntryMenuPanel researchHref={researchHref} writingHref={writingHref} projectsHref={projectsHref} />
+            </div>
+          </div>
         </header>
 
-      <div className="relative mx-auto w-full max-w-5xl">
-        <div className={`absolute right-0 top-0 z-[160] w-56 rounded-3xl border border-[#dbe2e8] bg-white p-2 shadow-[0_18px_48px_rgba(16,19,24,0.12)] transition-all ${entryMenuOpen ? "pointer-events-auto translate-y-0 opacity-100" : "pointer-events-none -translate-y-2 opacity-0"}`}>
-          <EntryMenuPanel onGoResearch={onGoResearch} onGoWriting={onGoWriting} onGoProjects={onGoProjects} />
-        </div>
+        <section className="relative min-h-0 flex-1 overflow-hidden">
+          <div className={`flex h-full flex-col items-center text-center transition-all duration-300 ${transitionStep !== null ? "-translate-y-4 opacity-25" : "translate-y-0 opacity-100"}`}>
+            <div className="w-full pt-[5vh]">
+              <h1 className="m-0 text-[34px] font-black leading-[1.08] tracking-[-0.04em] text-[#152540] md:text-[48px] xl:text-[56px]">
+                探索学术文献的无限可能
+              </h1>
+              <p className="mx-auto mt-3 max-w-[620px] text-[15px] font-semibold leading-7 text-[#6e84a4] md:text-base">
+                高效检索中英文权威文献，快速沉淀研究方向、论文写作与项目成果依据。
+              </p>
+            </div>
+
+            <div className="mt-6 w-full max-w-[960px]">
+              <SearchComposer
+                query={query}
+                mode={mode}
+                scope={scope}
+                filters={filters}
+                filtersOpen={filtersOpen}
+                loading={loading}
+                variant="hero"
+                onQueryChange={onQueryChange}
+                onModeChange={onModeChange}
+                onScopeChange={onScopeChange}
+                onFiltersChange={onFiltersChange}
+                onToggleFilters={onToggleFilters}
+                onSubmit={onSubmit}
+              />
+            </div>
+
+            <div className="mt-5 flex flex-wrap items-center justify-center gap-2.5 text-sm font-bold text-[#6e84a4]">
+              <span className="mr-1">热门搜索：</span>
+              {SUGGESTIONS.map((suggestion) => (
+                <button
+                  key={suggestion}
+                  type="button"
+                  onClick={() => onPickSuggestion(suggestion)}
+                  className="rounded-full border border-[#d8e3f2] bg-white/78 px-3.5 py-2 text-[13px] font-bold text-[#6980a3] shadow-[0_8px_22px_rgba(47,126,247,0.05)] transition-colors hover:border-[#cfe0ff] hover:bg-[#edf5ff] hover:text-[#1e67da]"
+                >
+                  {suggestion}
+                </button>
+              ))}
+            </div>
+
+            <div className="mt-auto w-full pb-5">
+              <div className="grid w-full grid-cols-2 gap-4 text-left lg:grid-cols-4">
+                <HomeFeatureCard icon={<IconGlobe />} title="海量资源" desc="覆盖中文库、开放学术库与高质量外文来源。" />
+                <HomeFeatureCard icon={<IconSearch />} title="精准检索" desc="支持关键词、语种、模式和权威标签筛选。" />
+                <HomeFeatureCard icon={<IconFilter />} title="质量筛选" desc="优先展示可核验来源、开放获取与高相关文献。" />
+                <HomeFeatureCard icon={<IconFlask />} title="研究承接" desc="检索结果可继续进入研究方向与论文写作。" />
+              </div>
+
+              <div className="mt-5 grid overflow-hidden rounded-[22px] border border-[#dce7f4] bg-white/78 shadow-[0_22px_56px_rgba(43,95,173,0.12)] backdrop-blur md:grid-cols-4">
+                <HomeMetric value="200M+" label="可检索学术记录" />
+                <HomeMetric value="8+" label="真实来源接入" />
+                <HomeMetric value="3" label="检索研究模式" />
+                <HomeMetric value="24h" label="持续更新线索" />
+              </div>
+            </div>
+          </div>
+
+          <SearchTransitionPanel query={transitionQuery || query} step={transitionStep} />
+        </section>
       </div>
+    </div>
+  );
+}
 
-      <section className="mx-auto flex w-full max-w-5xl flex-1 flex-col items-center justify-center pb-20 text-center">
-        <div className="mb-4 flex items-center gap-3 text-[30px] font-black tracking-[-0.04em]">
-          <ConsensusMark />
-          <span>Scholar Research</span>
-        </div>
-        <h1 className="mb-10 text-[34px] font-black tracking-[-0.04em] text-[#080b10] md:text-[40px]">
-          Research starts here
-        </h1>
+function HomeFeatureCard({ icon, title, desc }: { icon: React.ReactNode; title: string; desc: string }) {
+  return (
+    <article className="grid grid-cols-[42px_minmax(0,1fr)] gap-3">
+      <span className="grid h-[42px] w-[42px] place-items-center rounded-[14px] bg-white/82 text-[#307cf6] shadow-[0_12px_26px_rgba(47,126,247,0.07)]">
+        {icon}
+      </span>
+      <span>
+        <strong className="block text-[15px] leading-5 text-[#152540]">{title}</strong>
+        <span className="mt-1 block text-xs font-semibold leading-5 text-[#6e84a4]">{desc}</span>
+      </span>
+    </article>
+  );
+}
 
-        <div className="w-full max-w-[960px]">
-          <SearchComposer
-            query={query}
-            mode={mode}
-            scope={scope}
-            filters={filters}
-            filtersOpen={filtersOpen}
-            loading={loading}
-            variant="hero"
-            onQueryChange={onQueryChange}
-            onModeChange={onModeChange}
-            onScopeChange={onScopeChange}
-            onFiltersChange={onFiltersChange}
-            onToggleFilters={onToggleFilters}
-            onSubmit={onSubmit}
-          />
-        </div>
+function HomeMetric({ value, label }: { value: string; label: string }) {
+  return (
+    <div className="border-[#dce7f4] px-3 py-4 text-center md:border-l md:first:border-l-0">
+      <strong className="block text-[22px] font-black tracking-[-0.03em] text-[#307cf6]">{value}</strong>
+      <span className="mt-1 block text-xs font-bold text-[#6e84a4]">{label}</span>
+    </div>
+  );
+}
 
-        <div className="mt-8 flex flex-wrap justify-center gap-3">
-          <PromptChip icon={<IconTable />} label="Build a comparison table" onClick={() => onPickSuggestion("请围绕该主题构建文献对比表")} />
-          <PromptChip icon={<IconPuzzle />} label="Find studies by method" onClick={() => onPickSuggestion("查找使用实证研究方法的相关文献")} />
-          <PromptChip icon={<IconFlask />} label="Run a Deep review" onClick={() => onPickSuggestion("生成式人工智能支持研究生论文写作的系统综述")} />
-        </div>
-      </section>
+function SearchTransitionPanel({ query, step }: { query: string; step: number | null }) {
+  const visible = step !== null;
 
-      <footer className="mx-auto mb-6 flex w-full max-w-[960px] items-center gap-8 text-center">
-        <div className="h-px flex-1 bg-[#e2e5e9]" />
-        <p className="text-lg font-black tracking-[-0.02em] text-[#111318]">The new standard for academic research</p>
-        <div className="h-px flex-1 bg-[#e2e5e9]" />
-      </footer>
+  return (
+    <div className={`absolute left-1/2 top-[18vh] z-[180] w-[min(680px,calc(100vw-180px))] -translate-x-1/2 rounded-[22px] border border-[#d7e4f4] bg-white/95 p-5 text-left shadow-[0_22px_62px_rgba(43,95,173,0.16)] backdrop-blur transition-all duration-300 ${visible ? "pointer-events-auto translate-y-0 scale-100 opacity-100" : "pointer-events-none translate-y-4 scale-[0.98] opacity-0"}`}>
+      <h3 className="text-[21px] font-black leading-tight tracking-[-0.02em] text-[#152540]">正在为你组织检索任务</h3>
+      <p className="mt-2 text-xs font-semibold leading-6 text-[#6e84a4]">
+        {query ? `围绕“${query}”整理检索路径，完成后会在同一页面展开文献结果与侧边栏信息。` : "正在整理检索路径，完成后会展开文献结果与侧边栏信息。"}
+      </p>
+
+      <div className="mt-4 grid gap-2.5">
+        {SEARCH_TRANSITION_STEPS.map((item, index) => {
+          const active = step !== null && index <= step;
+          const done = step !== null && index < step;
+          return (
+            <div
+              key={item.title}
+              className={`grid grid-cols-[36px_minmax(0,1fr)_auto] items-center gap-3 rounded-[14px] border bg-white px-3 py-2.5 transition-all ${
+                active ? "translate-x-0 border-[#cddfff] opacity-100 shadow-[0_10px_22px_rgba(47,126,247,0.06)]" : "-translate-x-1 border-[#e4edf9] opacity-45"
+              }`}
+            >
+              <span className="grid h-9 w-9 place-items-center rounded-[11px] bg-[#edf5ff] text-[11px] font-black text-[#1e67da]">
+                {String(index + 1).padStart(2, "0")}
+              </span>
+              <span className="min-w-0">
+                <strong className="block text-[13px] leading-5 text-[#152540]">{item.title}</strong>
+                <span className="mt-0.5 block text-[11px] font-semibold leading-5 text-[#6e84a4]">{item.desc}</span>
+              </span>
+              <span className={`text-[11px] font-black ${active ? "text-[#1e67da]" : "text-[#88a0c0]"}`}>
+                {done ? "完成" : active ? "进行中" : "等待"}
+              </span>
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }
 
 function EntryMenuPanel({
   className = "",
-  onGoResearch,
-  onGoWriting,
-  onGoProjects,
+  researchHref,
+  writingHref,
+  projectsHref,
 }: {
   className?: string;
-  onGoResearch: () => void;
-  onGoWriting: () => void;
-  onGoProjects: () => void;
+  researchHref: string;
+  writingHref: string;
+  projectsHref: string;
 }) {
   return (
     <div className={className}>
-      <EntryMenuItem title="项目管理" desc="查看项目列表" onClick={onGoProjects}>
+      <EntryMenuItem title="项目管理" desc="查看项目列表" href={projectsHref}>
         <IconFolder />
       </EntryMenuItem>
-      <EntryMenuItem title="研究方向" desc="查看方向分析" onClick={onGoResearch}>
+      <EntryMenuItem title="研究方向" desc="查看方向分析" href={researchHref}>
         <IconFlask />
       </EntryMenuItem>
-      <EntryMenuItem title="论文写作" desc="进入写作台" onClick={onGoWriting}>
+      <EntryMenuItem title="论文写作" desc="进入写作台" href={writingHref}>
         <IconEdit />
       </EntryMenuItem>
     </div>
@@ -1083,18 +1220,17 @@ function EntryMenuPanel({
 function EntryMenuItem({
   title,
   desc,
-  onClick,
+  href,
   children,
 }: {
   title: string;
   desc: string;
-  onClick: () => void;
+  href: string;
   children: React.ReactNode;
 }) {
   return (
-    <button
-      type="button"
-      onClick={onClick}
+    <a
+      href={href}
       className="flex w-full items-center gap-3 rounded-2xl px-3 py-3 text-left transition-colors hover:bg-[#f3f7fb]"
     >
       <span className="grid h-9 w-9 shrink-0 place-items-center rounded-2xl bg-[#edf7ff] text-[#126fb0]">{children}</span>
@@ -1103,7 +1239,7 @@ function EntryMenuItem({
         <span className="mt-0.5 block text-xs text-[#8a949e]">{desc}</span>
       </span>
       <IconExternal />
-    </button>
+    </a>
   );
 }
 
@@ -1147,9 +1283,9 @@ function ResultWorkspace({
   onToggleSidebar,
   entryMenuOpen,
   onToggleEntries,
-  onGoResearch,
-  onGoWriting,
-  onGoProjects,
+  researchHref,
+  writingHref,
+  projectsHref,
 }: {
   query: string;
   activeQuery: string;
@@ -1189,9 +1325,9 @@ function ResultWorkspace({
   onToggleSidebar: () => void;
   entryMenuOpen: boolean;
   onToggleEntries: () => void;
-  onGoResearch: () => void;
-  onGoWriting: () => void;
-  onGoProjects: () => void;
+  researchHref: string;
+  writingHref: string;
+  projectsHref: string;
   onSendChat: (
     message: string,
     searchEnabled: boolean,
@@ -1225,8 +1361,8 @@ function ResultWorkspace({
               <IconGrid />
               <span>其他入口</span>
             </button>
-            <div className={`absolute right-0 top-[54px] z-[160] w-56 rounded-3xl border border-[#dbe2e8] bg-white p-2 shadow-[0_24px_60px_rgba(16,19,24,0.18)] transition-all ${entryMenuOpen ? "pointer-events-auto translate-y-0 opacity-100" : "pointer-events-none -translate-y-2 opacity-0"}`}>
-              <EntryMenuPanel onGoResearch={onGoResearch} onGoWriting={onGoWriting} onGoProjects={onGoProjects} />
+            <div className={`absolute right-0 top-[54px] z-[220] w-56 rounded-3xl border border-[#dbe2e8] bg-white p-2 shadow-[0_24px_60px_rgba(16,19,24,0.18)] transition-all ${entryMenuOpen ? "pointer-events-auto translate-y-0 opacity-100" : "pointer-events-none -translate-y-2 opacity-0"}`}>
+              <EntryMenuPanel researchHref={researchHref} writingHref={writingHref} projectsHref={projectsHref} />
             </div>
           </div>
           <button
@@ -1805,13 +1941,174 @@ function SearchComposer({
   onSubmit: () => void;
 }) {
   const isHero = variant === "hero";
+  const handleSubmit = (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    onSubmit();
+  };
+
+  if (isHero) {
+    return (
+      <form onSubmit={handleSubmit} className="relative">
+        <div className="grid min-h-[68px] grid-cols-1 items-center rounded-[22px] border border-[#d3e0f4] bg-white/88 p-2 shadow-[0_22px_62px_rgba(43,95,173,0.16)] backdrop-blur md:grid-cols-[minmax(0,1fr)_128px_98px_112px]">
+          <label className="flex min-w-0 items-center gap-3 px-4 py-2 text-left">
+            <span className="shrink-0 text-[#7a91b3]">
+              <IconSearch />
+            </span>
+            <input
+              value={query}
+              onChange={(event) => onQueryChange(event.target.value)}
+              placeholder="搜索论文标题、关键词、作者或 DOI"
+              className="h-11 w-full min-w-0 bg-transparent text-[15px] font-semibold text-[#152540] outline-none placeholder:text-[#9cafc9]"
+            />
+          </label>
+
+          <select
+            value={scope}
+            onChange={(event) => onScopeChange(event.target.value as LibraryScope)}
+            className="mx-2 h-11 rounded-[13px] border border-[#d9e5f5] bg-white px-3 text-sm font-black text-[#152540] outline-none transition-colors hover:border-[#307cf6]"
+          >
+            {SCOPE_OPTIONS.map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            ))}
+          </select>
+
+          <button
+            type="button"
+            onClick={onToggleFilters}
+            className={`mx-2 inline-flex h-11 items-center justify-center gap-2 rounded-[13px] border text-sm font-black transition-colors ${
+              filtersOpen
+                ? "border-[#cfe0ff] bg-[#edf5ff] text-[#1e67da]"
+                : "border-[#d9e5f5] bg-white text-[#152540] hover:border-[#307cf6]"
+            }`}
+          >
+            <IconFilter />
+            筛选
+          </button>
+
+          <button
+            type="submit"
+            disabled={!query.trim() || loading}
+            className="mx-2 h-12 rounded-[14px] bg-[linear-gradient(145deg,#428dff_0%,#2f74eb_100%)] text-[16px] font-black text-white shadow-[0_16px_34px_rgba(47,126,247,0.24)] transition-all hover:-translate-y-0.5 disabled:cursor-not-allowed disabled:bg-[#c9d2db] disabled:shadow-none"
+          >
+            {loading ? <span className="inline-grid place-items-center"><IconLoader /></span> : "搜索"}
+          </button>
+        </div>
+
+        <div className={`absolute right-[112px] top-[76px] z-[160] w-[min(420px,calc(100vw-72px))] rounded-[18px] border border-[#d5e1f3] bg-white/96 p-4 text-left shadow-[0_24px_54px_rgba(31,88,170,0.14)] backdrop-blur transition-all ${
+          filtersOpen ? "pointer-events-auto translate-y-0 opacity-100" : "pointer-events-none translate-y-2 opacity-0"
+        }`}>
+          <div>
+            <p className="mb-2 text-xs font-black uppercase tracking-[0.16em] text-[#6e84a4]">检索模式</p>
+            <div className="grid grid-cols-3 gap-2">
+              {MODE_OPTIONS.map((option) => (
+                <button
+                  key={option.value}
+                  type="button"
+                  onClick={() => onModeChange(option.value)}
+                  title={option.hint}
+                  className={`rounded-[12px] border px-3 py-2 text-sm font-black transition-colors ${
+                    mode === option.value
+                      ? "border-[#cfe0ff] bg-[#edf5ff] text-[#1e67da]"
+                      : "border-[#dbe6f4] bg-white text-[#6882a7] hover:border-[#cfe0ff]"
+                  }`}
+                >
+                  {option.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="mt-4 border-t border-[#e8eef8] pt-4">
+            <p className="mb-2 text-xs font-black uppercase tracking-[0.16em] text-[#6e84a4]">来源库</p>
+            <div className="flex flex-wrap gap-2">
+              {QUALITY_SOURCE_OPTIONS.map((option) => {
+                const active = filters.sources?.includes(option.value) ?? false;
+                return (
+                  <button
+                    key={option.value}
+                    type="button"
+                    onClick={() =>
+                      onFiltersChange({
+                        ...filters,
+                        sources: active
+                          ? (filters.sources || []).filter((item) => item !== option.value)
+                          : [...(filters.sources || []), option.value],
+                      })
+                    }
+                    className={`rounded-full border px-3 py-1.5 text-xs font-bold transition-colors ${
+                      active ? "border-[#cfe0ff] bg-[#edf5ff] text-[#1e67da]" : "border-[#dbe6f4] bg-white text-[#6882a7]"
+                    }`}
+                  >
+                    {option.label}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          <div className="mt-4 border-t border-[#e8eef8] pt-4">
+            <p className="mb-2 text-xs font-black uppercase tracking-[0.16em] text-[#6e84a4]">质量标签</p>
+            <div className="flex flex-wrap gap-2">
+              {QUALITY_TAG_OPTIONS.map((option) => {
+                const active = filters.quality_tags?.includes(option.value) ?? false;
+                return (
+                  <button
+                    key={option.value}
+                    type="button"
+                    onClick={() =>
+                      onFiltersChange({
+                        ...filters,
+                        quality_tags: active
+                          ? (filters.quality_tags || []).filter((item) => item !== option.value)
+                          : [...(filters.quality_tags || []), option.value],
+                      })
+                    }
+                    className={`rounded-full border px-3 py-1.5 text-xs font-bold transition-colors ${
+                      active ? "border-[#cfe0ff] bg-[#edf5ff] text-[#1e67da]" : "border-[#dbe6f4] bg-white text-[#6882a7]"
+                    }`}
+                  >
+                    {option.label}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          <div className="mt-4 grid gap-3 border-t border-[#e8eef8] pt-4 sm:grid-cols-2">
+            <label className="flex items-center justify-between gap-3 rounded-[13px] border border-[#dbe6f4] bg-white px-3 py-2.5">
+              <span className="text-sm font-bold text-[#152540]">仅开放获取</span>
+              <input
+                type="checkbox"
+                checked={filters.open_access_only ?? false}
+                onChange={(event) => onFiltersChange({ ...filters, open_access_only: event.target.checked })}
+              />
+            </label>
+            <label className="block rounded-[13px] border border-[#dbe6f4] bg-white px-3 py-2.5">
+              <span className="mb-1 block text-xs font-bold text-[#6e84a4]">最低引用量</span>
+              <input
+                type="number"
+                min={0}
+                value={filters.min_citation_count ?? 0}
+                onChange={(event) =>
+                  onFiltersChange({
+                    ...filters,
+                    min_citation_count: Math.max(0, Number(event.target.value || 0)),
+                  })
+                }
+                className="h-8 w-full rounded-[10px] border border-[#dbe6f4] px-2 text-sm outline-none"
+              />
+            </label>
+          </div>
+        </div>
+      </form>
+    );
+  }
 
   return (
     <form
-      onSubmit={(event) => {
-        event.preventDefault();
-        onSubmit();
-      }}
+      onSubmit={handleSubmit}
       className={`rounded-[24px] border border-[#d7dce2] bg-white shadow-[0_16px_36px_rgba(16,19,24,0.12)] ${
         isHero ? "p-3" : "p-3"
       }`}
@@ -2197,6 +2494,16 @@ function IconSearchSmall() {
     <svg className="shrink-0 text-[#126fb0]" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
       <circle cx="10" cy="10" r="6" />
       <path d="m15 15 5 5" />
+    </svg>
+  );
+}
+
+function IconGlobe() {
+  return (
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.1" strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="12" cy="12" r="9" />
+      <path d="M3 12h18" />
+      <path d="M12 3a15.3 15.3 0 0 1 4 9 15.3 15.3 0 0 1-4 9 15.3 15.3 0 0 1-4-9 15.3 15.3 0 0 1 4-9Z" />
     </svg>
   );
 }
