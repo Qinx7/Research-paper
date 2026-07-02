@@ -22,6 +22,7 @@ from ..services.ownership import (
     query_owned_project_designs,
     query_owned_research_directions,
 )
+from ..skills import get_default_skill_runtime
 
 router = APIRouter(prefix="/research", tags=["research"])
 
@@ -37,7 +38,9 @@ def generate_directions(
     结果自动持久化到数据库。
     """
     project_id = get_owned_project(payload.project_id, current_user, db).id if payload.project_id else None
+    skill_runtime = get_default_skill_runtime()
     try:
+        skill_runtime.router.resolve(domain="research", action="generate_directions")
         return run_generate_research_directions_workflow(
             db=db,
             literature_analysis=payload.literature_analysis,
@@ -46,6 +49,8 @@ def generate_directions(
             user_id=str(current_user.id),
             direction_agent=research_direction_agent,
             record_db=db,
+            skill_executor=skill_runtime.executor,
+            skill_router=skill_runtime.router,
         )
     except ValueError as exc:
         raise HTTPException(status_code=500, detail=f"研究方向生成失败：{exc}")
@@ -94,7 +99,9 @@ def generate_design(
     结果自动持久化到数据库。
     """
     project_id = get_owned_project(payload.project_id, current_user, db).id if payload.project_id else None
+    skill_runtime = get_default_skill_runtime()
     try:
+        skill_runtime.router.resolve(domain="research", action="generate_design")
         return run_generate_project_design_workflow(
             db=db,
             direction=payload.direction,
@@ -105,6 +112,8 @@ def generate_design(
             user_id=str(current_user.id),
             project_design_agent=project_design_agent,
             record_db=db,
+            skill_executor=skill_runtime.executor,
+            skill_router=skill_runtime.router,
         )
     except ValueError as exc:
         raise HTTPException(status_code=500, detail=f"项目设计生成失败：{exc}")

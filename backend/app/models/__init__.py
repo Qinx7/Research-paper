@@ -4,7 +4,6 @@ from .paper import Paper
 from .research_direction import ResearchDirection
 from .project_design import ProjectDesign
 from .conversation import Conversation, Message
-from .proposal import Proposal
 from .outcome import Outcome
 from .draft import Draft
 from .zotero_sync import ZoteroSync
@@ -15,4 +14,4 @@ from .generated_artifact import GeneratedArtifact
 from .project_document_chunk import ProjectDocumentChunk
 from .agent_workflow import AgentWorkflowRun, AgentWorkflowStep
 
-__all__ = ["Project", "Paper", "ResearchDirection", "ProjectDesign", "Conversation", "Message", "Proposal", "Outcome", "Draft", "ZoteroSync", "User", "PaperNote", "LiteratureSearchTask", "GeneratedArtifact", "ProjectDocumentChunk", "AgentWorkflowRun", "AgentWorkflowStep"]
+__all__ = ["Project", "Paper", "ResearchDirection", "ProjectDesign", "Conversation", "Message", "Outcome", "Draft", "ZoteroSync", "User", "PaperNote", "LiteratureSearchTask", "GeneratedArtifact", "ProjectDocumentChunk", "AgentWorkflowRun", "AgentWorkflowStep"]

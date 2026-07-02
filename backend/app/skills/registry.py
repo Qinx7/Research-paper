@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from .definitions import build_paper_skill_definitions
 from .definitions import build_ppt_skill_definitions
+from .definitions import build_research_skill_definitions
 from .models import SkillDefinition
 
 
@@ -49,6 +50,8 @@ def build_default_skill_registry() -> SkillRegistry:
     """构建当前默认技能注册表。"""
     registry = SkillRegistry()
     for definition in build_paper_skill_definitions():
+        registry.register(definition)
+    for definition in build_research_skill_definitions():
         registry.register(definition)
     for definition in build_ppt_skill_definitions():
         registry.register(definition)

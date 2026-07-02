@@ -1,4 +1,7 @@
 import unittest
+from unittest.mock import patch
+from tempfile import NamedTemporaryFile
+import os
 
 from app.services.authority_filter_service import evaluate_paper_authority, summarize_authority_hits
 from app.services.literature_search import PaperResult
@@ -146,6 +149,34 @@ class AuthorityFilterServiceTests(unittest.TestCase):
         self.assertIn("cas", result.pending_tags)
         self.assertEqual(result.verified_level, "unverified")
 
+    def test_catalog_match_upgrades_pending_authority_to_verified(self):
+        with patch(
+            "app.services.authority_filter_service.match_authority_catalog",
+            return_value={
+                "ei": {"reason": "本地授权目录通过 DOI 精确命中"},
+                "jcr": {"reason": "本地授权目录通过标题命中"},
+            },
+        ):
+            result = evaluate_paper_authority(
+                PaperResult(
+                    title="Catalog verified paper",
+                    authors=["Author"],
+                    year=2024,
+                    venue="General Journal",
+                    doi="10.1000/catalog",
+                    abstract="This paper mentions JCR and EI indexing.",
+                    citation_count=20,
+                    source="crossref",
+                )
+            )
+
+        self.assertIn("ei", result.tags)
+        self.assertIn("jcr", result.tags)
+        self.assertNotIn("ei", result.pending_tags)
+        self.assertNotIn("jcr", result.pending_tags)
+        self.assertEqual(result.verified_level, "verified")
+        self.assertTrue(any("授权目录" in reason for reason in result.reasons))
+
     def test_authority_summary_keeps_verified_and_pending_counts_separate(self):
         summary = summarize_authority_hits([
             {
@@ -167,6 +198,78 @@ class AuthorityFilterServiceTests(unittest.TestCase):
         self.assertEqual(summary["pending_counts"]["cas"], 1)
         self.assertTrue(summary["has_verified"])
         self.assertTrue(summary["has_pending"])
+
+    def test_catalog_can_verify_jcr_by_venue_without_title_level_catalog(self):
+        temp_path = None
+        try:
+            with NamedTemporaryFile("w", encoding="utf-8", suffix=".csv", delete=False) as fh:
+                fh.write("title,doi,venue,tags\n")
+                fh.write(",,Journal of Learning Analytics,jcr\n")
+                temp_path = fh.name
+
+            with patch("app.services.authority_catalog_service.settings.AUTHORITY_CATALOG_PATH", temp_path):
+                from app.services import authority_catalog_service
+                authority_catalog_service._load_catalog_rows.cache_clear()
+                result = evaluate_paper_authority(
+                    PaperResult(
+                        title="A paper without local title catalog",
+                        authors=["Author"],
+                        year=2024,
+                        venue="Journal of Learning Analytics",
+                        abstract="This paper is indexed by JCR.",
+                        citation_count=10,
+                        source="openalex",
+                    )
+                )
+
+            self.assertIn("jcr", result.tags)
+            self.assertNotIn("jcr", result.pending_tags)
+            self.assertEqual(result.verified_level, "verified")
+        finally:
+            if temp_path and os.path.exists(temp_path):
+                os.unlink(temp_path)
+            try:
+                from app.services import authority_catalog_service
+                authority_catalog_service._load_catalog_rows.cache_clear()
+            except Exception:
+                pass
+
+    def test_jcr_and_cas_do_not_become_verified_by_text_only_even_with_catalog_enabled(self):
+        temp_path = None
+        try:
+            with NamedTemporaryFile("w", encoding="utf-8", suffix=".csv", delete=False) as fh:
+                fh.write("title,doi,venue,tags\n")
+                fh.write(",,Some Other Journal,\"jcr,cas\"\n")
+                temp_path = fh.name
+
+            with patch("app.services.authority_catalog_service.settings.AUTHORITY_CATALOG_PATH", temp_path):
+                from app.services import authority_catalog_service
+                authority_catalog_service._load_catalog_rows.cache_clear()
+                result = evaluate_paper_authority(
+                    PaperResult(
+                        title="JCR and CAS mentioned in abstract only",
+                        authors=["Author"],
+                        year=2024,
+                        venue="Unverified Journal",
+                        abstract="This paper mentions JCR and CAS partition in its abstract.",
+                        citation_count=4,
+                        source="openalex",
+                    )
+                )
+
+            self.assertNotIn("jcr", result.tags)
+            self.assertNotIn("cas", result.tags)
+            self.assertIn("jcr", result.pending_tags)
+            self.assertIn("cas", result.pending_tags)
+            self.assertEqual(result.verified_level, "unverified")
+        finally:
+            if temp_path and os.path.exists(temp_path):
+                os.unlink(temp_path)
+            try:
+                from app.services import authority_catalog_service
+                authority_catalog_service._load_catalog_rows.cache_clear()
+            except Exception:
+                pass
 
 
 if __name__ == "__main__":

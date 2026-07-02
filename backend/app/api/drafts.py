@@ -23,12 +23,13 @@ from ..schemas.draft import (
     DraftCreate, DraftUpdate, DraftOut, DraftOutline, PaperSection,
     GenerateOutlineRequest, GenerateChapterRequest,
     PAPER_CHAPTER_KEYS, PAPER_CHAPTER_LABELS,
-    ChapterResult, AbstractResult, SuggestRefsResult,
+    ChapterResult, AbstractResult, SuggestRefsResult, WritingPlanResult, WritingReviewResult, WritingRevisionResult,
+    FullDraftReviewResult, FullDraftRevisionResult, FullDraftGenerateResult,
 )
-from ..schemas.defense_ppt import DefensePPTOutline, DefenseSlideInfo
 from ..schemas.compliance import ComplianceResult, ComplianceConfirmRequest
 from ..agents.paper_writing_agent import paper_writing_agent
 from ..agents.workflows import run_generate_chapter_workflow
+from ..skills import SkillExecutionContext, get_default_skill_runtime
 from ..tasks.paper_task import generate_chapter_task
 from ..services.compliance_checker import check_draft
 from ..services.evidence_retrieval_service import build_evidence_context, retrieve_project_evidence
@@ -188,6 +189,109 @@ def _draft_to_out(draft: Draft) -> DraftOut:
         created_at=draft.created_at,
         updated_at=draft.updated_at,
     )
+
+
+def _build_full_draft_text(draft: Draft) -> str:
+    """把现有章节内容拼成整篇正文，供整篇审查和修订使用。"""
+    content = draft.content or {}
+    parts = [f"# {draft.title}".strip()]
+    for key in PAPER_CHAPTER_KEYS:
+        chapter = content.get(key)
+        if not isinstance(chapter, dict):
+            continue
+        chapter_text = str(chapter.get("content") or "").strip()
+        if not chapter_text:
+            continue
+        title = chapter.get("title") or PAPER_CHAPTER_LABELS.get(key, key)
+        parts.append(f"## {title}\n\n{chapter_text}")
+    return "\n\n".join(parts).strip()
+
+
+def _build_chapter_summaries(draft: Draft) -> list[dict]:
+    """生成整篇审查所需的轻量章节摘要，不引入新表。"""
+    content = draft.content or {}
+    summaries = []
+    for key in PAPER_CHAPTER_KEYS:
+        chapter = content.get(key)
+        title = PAPER_CHAPTER_LABELS.get(key, key)
+        chapter_text = ""
+        status = "draft"
+        if isinstance(chapter, dict):
+            title = chapter.get("title") or title
+            chapter_text = str(chapter.get("content") or "")
+            status = chapter.get("status") or status
+        summaries.append({
+            "key": key,
+            "title": title,
+            "length": len(chapter_text.strip()),
+            "status": status,
+        })
+    return summaries
+
+
+def _collect_draft_citations(draft: Draft) -> list[str]:
+    """收集章节与 references 中已有的引用信息，供整篇审查判断证据状态。"""
+    content = draft.content or {}
+    citations: list[str] = []
+    for key in PAPER_CHAPTER_KEYS:
+        chapter = content.get(key)
+        if isinstance(chapter, dict):
+            citations.extend([str(item).strip() for item in chapter.get("citations", []) if str(item).strip()])
+    for ref in draft.references or []:
+        if isinstance(ref, dict):
+            title = str(ref.get("title") or ref.get("citation_text") or "").strip()
+            if title:
+                citations.append(title)
+        elif str(ref).strip():
+            citations.append(str(ref).strip())
+    return list(dict.fromkeys(citations))
+
+
+def _apply_full_text_to_chapters(full_text: str, existing_content: dict | None) -> dict:
+    """把保留了 Markdown 二级标题的全文回写到章节 JSON。"""
+    content = dict(existing_content or {})
+    title_to_key: dict[str, str] = {}
+    for key in PAPER_CHAPTER_KEYS:
+        labels = [PAPER_CHAPTER_LABELS.get(key, key)]
+        existing = content.get(key)
+        if isinstance(existing, dict) and existing.get("title"):
+            labels.append(str(existing.get("title")))
+        for label in labels:
+            normalized = re.sub(r"\s+", "", str(label))
+            if normalized:
+                title_to_key[normalized] = key
+
+    matches = list(re.finditer(r"^##\s+(.+?)\s*$", full_text or "", flags=re.MULTILINE))
+    if not matches:
+        return content
+
+    for index, match in enumerate(matches):
+        heading = match.group(1).strip()
+        normalized_heading = re.sub(r"\s+", "", heading)
+        chapter_key = title_to_key.get(normalized_heading)
+        if not chapter_key:
+            chapter_key = next(
+                (
+                    key
+                    for label, key in title_to_key.items()
+                    if normalized_heading in label or label in normalized_heading
+                ),
+                None,
+            )
+        if not chapter_key:
+            continue
+        start = match.end()
+        end = matches[index + 1].start() if index + 1 < len(matches) else len(full_text)
+        chapter_text = full_text[start:end].strip()
+        current = content.get(chapter_key) if isinstance(content.get(chapter_key), dict) else {}
+        content[chapter_key] = {
+            **current,
+            "title": current.get("title") or PAPER_CHAPTER_LABELS.get(chapter_key, heading),
+            "content": chapter_text,
+            "status": "edited",
+        }
+
+    return content
 # ---- CRUD ----
 
 @router.post("/", response_model=DraftOut, status_code=201)
@@ -293,15 +397,27 @@ def generate_outline(
     outcomes_summary = _build_outcomes_summary(db, draft.project_id)
     literature_context = _build_literature_context(db, draft.project_id)
 
-    result = paper_writing_agent.generate_outline(
-        project_context=project_context,
-        outcomes_summary=outcomes_summary,
-        literature_context=literature_context,
+    skill_runtime = get_default_skill_runtime()
+    skill_definition = skill_runtime.router.resolve(domain="paper", action="generate_outline")
+    result = skill_runtime.executor.execute(
+        skill_definition.id,
+        {
+            "project_context": project_context,
+            "outcomes_summary": outcomes_summary,
+            "literature_context": literature_context,
+        },
+        context=SkillExecutionContext(
+            user_id=str(current_user.id),
+            project_id=str(draft.project_id),
+            draft_id=str(draft.id),
+            state={"writing_agent": paper_writing_agent},
+        ),
     )
+    outline_result = result.output
 
     # 保存大纲到草稿
-    draft.outline = result
-    draft.title = result.get("suggested_title", draft.title)
+    draft.outline = outline_result
+    draft.title = outline_result.get("suggested_title", draft.title)
     db.commit()
 
     from ..schemas.draft import ChapterOutline
@@ -311,13 +427,291 @@ def generate_outline(
             title=ch.get("title", ""),
             subsections=ch.get("subsections", []),
         )
-        for ch in result.get("chapters", [])
+        for ch in outline_result.get("chapters", [])
     ]
     return DraftOutline(
         chapters=chapters,
-        suggested_title=result.get("suggested_title"),
-        notes=result.get("notes"),
+        suggested_title=outline_result.get("suggested_title"),
+        notes=outline_result.get("notes"),
     )
+
+
+@router.post("/{draft_id}/plan", response_model=WritingPlanResult)
+def generate_writing_plan(
+    draft_id: UUID,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """生成论文写作计划。"""
+    draft = get_owned_draft(draft_id, current_user, db)
+
+    project_context = _build_project_context(db, draft.project_id)
+    outcomes_summary = _build_outcomes_summary(db, draft.project_id)
+    literature_context = _build_literature_context(db, draft.project_id)
+
+    skill_runtime = get_default_skill_runtime()
+    skill_definition = skill_runtime.router.resolve(domain="paper", action="plan")
+    result = skill_runtime.executor.execute(
+        skill_definition.id,
+        {
+            "project_context": project_context,
+            "outcomes_summary": outcomes_summary,
+            "literature_context": literature_context,
+        },
+        context=SkillExecutionContext(
+            user_id=str(current_user.id),
+            project_id=str(draft.project_id),
+            draft_id=str(draft.id),
+            state={"writing_agent": paper_writing_agent},
+        ),
+    )
+    plan_result = result.output
+
+    content = dict(draft.content or {})
+    content["_writing_plan"] = plan_result
+    draft.content = content
+    flag_modified(draft, "content")
+    db.commit()
+
+    return WritingPlanResult(**plan_result)
+
+
+@router.post("/{draft_id}/full-generate", response_model=DraftOut)
+def generate_full_draft(
+    draft_id: UUID,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """生成整篇初稿，保留已手工编辑章节。"""
+    draft = get_owned_draft(draft_id, current_user, db)
+
+    project_context = _build_project_context(db, draft.project_id)
+    outcomes_summary = _build_outcomes_summary(db, draft.project_id)
+    literature_context = _build_literature_context(db, draft.project_id)
+
+    result = paper_writing_agent.generate_full_draft(
+        project_context=project_context,
+        outcomes_summary=outcomes_summary,
+        literature_context=literature_context,
+        existing_outline=draft.outline or None,
+        existing_chapters=draft.content or {},
+    )
+
+    draft.title = result.get("suggested_title", draft.title)
+    draft.outline = result.get("outline", draft.outline or {})
+    draft.content = result.get("content", draft.content or {})
+    draft.version = (draft.version or 1) + 1
+    flag_modified(draft, "content")
+    db.commit()
+    db.refresh(draft)
+
+    return _draft_to_out(draft)
+
+
+@router.post("/{draft_id}/chapters/{chapter_key}/review", response_model=WritingReviewResult)
+def review_chapter(
+    draft_id: UUID,
+    chapter_key: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """审查当前章节的结构、依据与表达问题。"""
+    if chapter_key not in PAPER_CHAPTER_KEYS:
+        raise HTTPException(status_code=400, detail=f"无效的章节标识: {chapter_key}")
+
+    draft = get_owned_draft(draft_id, current_user, db)
+    chapter_data = (draft.content or {}).get(chapter_key)
+    if not isinstance(chapter_data, dict) or not str(chapter_data.get("content") or "").strip():
+        raise HTTPException(status_code=400, detail="当前章节暂无内容，无法审查")
+
+    evidence_context = _build_literature_context(db, draft.project_id)
+    skill_runtime = get_default_skill_runtime()
+    skill_definition = skill_runtime.router.resolve(domain="paper", action="review_chapter")
+    result = skill_runtime.executor.execute(
+        skill_definition.id,
+        {
+            "chapter_key": chapter_key,
+            "chapter_title": chapter_data.get("title", PAPER_CHAPTER_LABELS.get(chapter_key, chapter_key)),
+            "chapter_content": chapter_data.get("content", ""),
+            "citations": chapter_data.get("citations", []),
+            "evidence_context": evidence_context,
+        },
+        context=SkillExecutionContext(
+            user_id=str(current_user.id),
+            project_id=str(draft.project_id),
+            draft_id=str(draft.id),
+            state={"writing_agent": paper_writing_agent},
+        ),
+    )
+    review_result = result.output
+
+    content = dict(draft.content or {})
+    content["_chapter_reviews"] = {
+        **(content.get("_chapter_reviews") if isinstance(content.get("_chapter_reviews"), dict) else {}),
+        chapter_key: review_result,
+    }
+    draft.content = content
+    flag_modified(draft, "content")
+    db.commit()
+
+    return WritingReviewResult(**review_result)
+
+
+@router.post("/{draft_id}/chapters/{chapter_key}/revise", response_model=WritingRevisionResult)
+def revise_chapter(
+    draft_id: UUID,
+    chapter_key: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """根据当前章节审查结果执行定向修订。"""
+    if chapter_key not in PAPER_CHAPTER_KEYS:
+        raise HTTPException(status_code=400, detail=f"无效的章节标识: {chapter_key}")
+
+    draft = get_owned_draft(draft_id, current_user, db)
+    chapter_data = (draft.content or {}).get(chapter_key)
+    if not isinstance(chapter_data, dict) or not str(chapter_data.get("content") or "").strip():
+        raise HTTPException(status_code=400, detail="当前章节暂无内容，无法修订")
+
+    review_map = (draft.content or {}).get("_chapter_reviews")
+    review_data = review_map.get(chapter_key) if isinstance(review_map, dict) else None
+    if not isinstance(review_data, dict):
+        raise HTTPException(status_code=400, detail="请先执行章节审查，再进行定向修订")
+
+    evidence_context = _build_literature_context(db, draft.project_id)
+    skill_runtime = get_default_skill_runtime()
+    skill_definition = skill_runtime.router.resolve(domain="paper", action="apply_revision")
+    result = skill_runtime.executor.execute(
+        skill_definition.id,
+        {
+            "chapter_key": chapter_key,
+            "chapter_title": chapter_data.get("title", PAPER_CHAPTER_LABELS.get(chapter_key, chapter_key)),
+            "chapter_content": chapter_data.get("content", ""),
+            "issues": review_data.get("issues", []),
+            "focus_areas": review_data.get("focus_areas", []),
+            "citations": chapter_data.get("citations", []),
+            "evidence_context": evidence_context,
+        },
+        context=SkillExecutionContext(
+            user_id=str(current_user.id),
+            project_id=str(draft.project_id),
+            draft_id=str(draft.id),
+            state={"writing_agent": paper_writing_agent},
+        ),
+    )
+    revision_result = result.output
+
+    content = dict(draft.content or {})
+    content[chapter_key] = {
+        "title": revision_result.get("title", chapter_data.get("title", PAPER_CHAPTER_LABELS.get(chapter_key, chapter_key))),
+        "content": revision_result.get("content", chapter_data.get("content", "")),
+        "status": "edited",
+        "citations": revision_result.get("citations", chapter_data.get("citations", [])),
+        "data_based": revision_result.get("data_based", chapter_data.get("data_based", False)),
+    }
+    content["_chapter_revisions"] = {
+        **(content.get("_chapter_revisions") if isinstance(content.get("_chapter_revisions"), dict) else {}),
+        chapter_key: revision_result,
+    }
+    draft.content = content
+    draft.version = (draft.version or 1) + 1
+    flag_modified(draft, "content")
+    db.commit()
+
+    return WritingRevisionResult(**revision_result)
+
+
+@router.post("/{draft_id}/review-full", response_model=FullDraftReviewResult)
+def review_full_draft(
+    draft_id: UUID,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """审查整篇论文的结构、证据、衔接和重复风险。"""
+    draft = get_owned_draft(draft_id, current_user, db)
+    full_text = _build_full_draft_text(draft)
+    if not full_text or "##" not in full_text:
+        raise HTTPException(status_code=400, detail="当前草稿暂无可审查的整篇正文")
+
+    evidence_context = _build_literature_context(db, draft.project_id)
+    skill_runtime = get_default_skill_runtime()
+    skill_definition = skill_runtime.router.resolve(domain="paper", action="review_full")
+    result = skill_runtime.executor.execute(
+        skill_definition.id,
+        {
+            "draft_title": draft.title,
+            "full_text": full_text,
+            "chapter_summaries": _build_chapter_summaries(draft),
+            "citations": _collect_draft_citations(draft),
+            "evidence_context": evidence_context,
+        },
+        context=SkillExecutionContext(
+            user_id=str(current_user.id),
+            project_id=str(draft.project_id),
+            draft_id=str(draft.id),
+            state={"writing_agent": paper_writing_agent},
+        ),
+    )
+    review_result = result.output
+
+    content = dict(draft.content or {})
+    content["_full_review"] = review_result
+    draft.content = content
+    flag_modified(draft, "content")
+    db.commit()
+
+    return FullDraftReviewResult(**review_result)
+
+
+@router.post("/{draft_id}/revise-full", response_model=FullDraftRevisionResult)
+def revise_full_draft(
+    draft_id: UUID,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """根据整篇审查结果执行整篇轻量修订并回写章节正文。"""
+    draft = get_owned_draft(draft_id, current_user, db)
+    content = dict(draft.content or {})
+    review_data = content.get("_full_review")
+    if not isinstance(review_data, dict):
+        raise HTTPException(status_code=400, detail="请先执行整篇审查，再进行整篇修订")
+
+    full_text = _build_full_draft_text(draft)
+    if not full_text or "##" not in full_text:
+        raise HTTPException(status_code=400, detail="当前草稿暂无可修订的整篇正文")
+
+    evidence_context = _build_literature_context(db, draft.project_id)
+    skill_runtime = get_default_skill_runtime()
+    skill_definition = skill_runtime.router.resolve(domain="paper", action="revise_full")
+    result = skill_runtime.executor.execute(
+        skill_definition.id,
+        {
+            "draft_title": draft.title,
+            "full_text": full_text,
+            "issues": review_data.get("issues", []),
+            "focus_areas": review_data.get("focus_areas", []),
+            "citations": _collect_draft_citations(draft),
+            "evidence_context": evidence_context,
+        },
+        context=SkillExecutionContext(
+            user_id=str(current_user.id),
+            project_id=str(draft.project_id),
+            draft_id=str(draft.id),
+            state={"writing_agent": paper_writing_agent},
+        ),
+    )
+    revision_result = result.output
+
+    updated_content = _apply_full_text_to_chapters(revision_result.get("full_text", ""), content)
+    updated_content["_full_review"] = review_data
+    updated_content["_full_revision"] = revision_result
+    draft.content = updated_content
+    draft.title = revision_result.get("title") or draft.title
+    draft.version = (draft.version or 1) + 1
+    flag_modified(draft, "content")
+    db.commit()
+
+    return FullDraftRevisionResult(**revision_result)
 
 
 @router.post("/{draft_id}/chapters/{chapter_key}", response_model=ChapterResult)
@@ -587,46 +981,6 @@ def download_draft(
         media_type=content_type,
         filename=filename,
     )
-
-
-# ---- 答辩 PPT 预览（从论文提取） ----
-
-@router.get("/{draft_id}/defense-outline", response_model=DefensePPTOutline)
-def get_defense_outline(
-    draft_id: UUID,
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
-):
-    """从论文草稿生成答辩 PPT 大纲预览"""
-    draft = get_owned_draft(draft_id, current_user, db)
-
-    content = draft.content or {}
-    has_real_data = False
-    for key, ch in content.items():
-        if isinstance(ch, dict) and ch.get("data_based"):
-            has_real_data = True
-            break
-
-    # 14 页答辩 PPT 结构
-    slides = [
-        DefenseSlideInfo(page=1, title="题目页", content_type="cover", description=draft.title),
-        DefenseSlideInfo(page=2, title="研究背景与意义", content_type="content", description="选题背景和研究意义"),
-        DefenseSlideInfo(page=3, title="研究问题与目标", content_type="content", description="核心研究问题和目标"),
-        DefenseSlideInfo(page=4, title="国内外研究现状", content_type="content", description="关键文献综述"),
-        DefenseSlideInfo(page=5, title="系统总体设计", content_type="section", description="系统架构和设计思路"),
-        DefenseSlideInfo(page=6, title="系统架构", content_type="content", description="技术架构图"),
-        DefenseSlideInfo(page=7, title="核心功能实现", content_type="content", description="关键模块实现"),
-        DefenseSlideInfo(page=8, title="实验设计", content_type="section", description="实验方案和评价指标"),
-        DefenseSlideInfo(page=9, title="实验结果与数据分析" if has_real_data else "实验设计方案与预期结果",
-                         content_type="content", description="关键发现和数据"),
-        DefenseSlideInfo(page=10, title="结果分析与讨论", content_type="content", description="结果解释和对比"),
-        DefenseSlideInfo(page=11, title="创新点", content_type="card_list", description="2-3个创新点"),
-        DefenseSlideInfo(page=12, title="总结与展望", content_type="content", description="研究总结和未来方向"),
-        DefenseSlideInfo(page=13, title="研究成果", content_type="numbered_list", description="发表论文/系统/数据集"),
-        DefenseSlideInfo(page=14, title="致谢", content_type="ending", description="感谢导师和团队"),
-    ]
-    return DefensePPTOutline(slides=slides, total_slides=len(slides), has_real_data=has_real_data)
-
 
 
 # ---- PDF 渲染 ----

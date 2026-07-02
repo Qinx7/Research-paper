@@ -91,7 +91,6 @@ class ProjectWorkspaceServiceTests(unittest.TestCase):
             papers=[paper],
             paper_notes=[note],
             chunks=[chunk],
-            proposals=[],
         )
 
         self.assertEqual(snapshot["stats"]["outcomes_total"], 1)
@@ -112,7 +111,6 @@ class ProjectWorkspaceServiceTests(unittest.TestCase):
         older_time = datetime.utcnow() - timedelta(days=2)
         newer_time = datetime.utcnow()
         latest_draft_id = uuid.uuid4()
-        latest_proposal_id = uuid.uuid4()
 
         older_draft = SimpleNamespace(
             id=uuid.uuid4(),
@@ -139,12 +137,6 @@ class ProjectWorkspaceServiceTests(unittest.TestCase):
                 "chapter_2_theory": {"title": "第二章 相关工作", "content": "有内容", "status": "edited", "data_based": True, "citations": []},
             },
         )
-        latest_proposal = SimpleNamespace(
-            id=latest_proposal_id,
-            project_id=project_id,
-            title="开题报告",
-            created_at=newer_time,
-        )
 
         snapshot = build_project_workspace_snapshot(
             project_id=project_id,
@@ -153,18 +145,15 @@ class ProjectWorkspaceServiceTests(unittest.TestCase):
             papers=[],
             paper_notes=[],
             chunks=[],
-            proposals=[latest_proposal],
         )
 
         delivery = snapshot["delivery"]
         self.assertEqual(delivery["latest_draft"]["id"], str(latest_draft_id))
         self.assertEqual(delivery["latest_draft"]["completed_chapters"], 2)
         self.assertEqual(delivery["latest_draft"]["completion_rate"], 67)
-        self.assertTrue(delivery["defense"]["has_real_data"])
-        self.assertTrue(delivery["defense"]["ready"])
-        self.assertEqual(delivery["latest_proposal"]["id"], str(latest_proposal_id))
+        self.assertTrue(delivery["presentation"]["has_real_data"])
+        self.assertTrue(delivery["presentation"]["ready"])
         self.assertTrue(delivery["latest_draft"]["download_docx_url"].endswith("/download?format=docx"))
-        self.assertTrue(delivery["latest_proposal"]["download_pdf_url"].endswith("/download?format=pdf"))
 
     def test_build_snapshot_can_target_specific_draft(self):
         from app.services.project_workspace_service import build_project_workspace_snapshot
@@ -230,7 +219,6 @@ class ProjectWorkspaceServiceTests(unittest.TestCase):
             papers=[],
             paper_notes=[],
             chunks=[],
-            proposals=[],
             active_draft_id=str(older_draft.id),
         )
 

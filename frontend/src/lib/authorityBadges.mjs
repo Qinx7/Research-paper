@@ -20,11 +20,13 @@ export function buildAuthorityBadgeItems(paper) {
       key: `verified-${tag}`,
       label: authorityLabel(tag),
       tone: "verified",
+      title: `${authorityLabel(tag)}：已完成来源或本地授权目录级核验`,
     })),
     ...pending.map((tag) => ({
       key: `pending-${tag}`,
       label: `待核验 ${authorityLabel(tag)}`,
       tone: "pending",
+      title: `${authorityLabel(tag)}：仅检测到相关信号，尚未完成本地授权目录级核验`,
     })),
   ];
 }

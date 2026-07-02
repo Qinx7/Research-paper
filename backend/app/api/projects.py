@@ -15,7 +15,6 @@ from ..models.paper_note import PaperNote
 from ..models.project import Project
 from ..models.project_design import ProjectDesign
 from ..models.project_document_chunk import ProjectDocumentChunk
-from ..models.proposal import Proposal
 from ..models.research_direction import ResearchDirection
 from ..models.user import User
 from ..models.zotero_sync import ZoteroSync
@@ -171,14 +170,6 @@ def _delete_project_dependencies(db: Session, project_id: UUID) -> None:
     # 先删依赖更深的记录
     for note in db.query(PaperNote).filter(PaperNote.project_id == project_id).all():
         db.delete(note)
-
-    for proposal in db.query(Proposal).filter(Proposal.project_id == project_id).all():
-        if getattr(proposal, "docx_path", None):
-            try:
-                delete_upload(proposal.docx_path)
-            except Exception:
-                pass
-        db.delete(proposal)
 
     for chunk in db.query(ProjectDocumentChunk).filter(ProjectDocumentChunk.project_id == project_id).all():
         db.delete(chunk)

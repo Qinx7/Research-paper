@@ -1,0 +1,307 @@
+<!DOCTYPE html><html class="light" lang="en" style=""><head>
+<meta charset="utf-8">
+<meta content="width=device-width, initial-scale=1.0" name="viewport">
+<title>ScholarWrite | Editor</title>
+<!-- Tailwind CSS with Plugins -->
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<!-- Google Fonts: Open Sans -->
+<link href="https://fonts.googleapis.com/css2?family=Open+Sans:wght@300;400;500;600;700;800&amp;display=swap" rel="stylesheet">
+<!-- Material Symbols -->
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet">
+<!-- Design System Configuration -->
+<script id="tailwind-config">
+      tailwind.config = {
+        darkMode: "class",
+        theme: {
+          extend: {
+            "colors": {
+                    "tertiary-container": "#bc4800",
+                    "secondary": "#555f6d",
+                    "on-tertiary": "#ffffff",
+                    "surface-variant": "#e1e3e4",
+                    "on-error-container": "#93000a",
+                    "surface": "#f8f9fa",
+                    "on-secondary-fixed": "#121c28",
+                    "on-surface-variant": "#434655",
+                    "inverse-primary": "#b4c5ff",
+                    "on-primary": "#ffffff",
+                    "surface-container": "#edeeef",
+                    "on-secondary-fixed-variant": "#3e4755",
+                    "surface-container-highest": "#e1e3e4",
+                    "on-tertiary-fixed-variant": "#7d2d00",
+                    "error": "#ba1a1a",
+                    "tertiary": "#943700",
+                    "background": "#f8f9fa",
+                    "tertiary-fixed": "#ffdbcd",
+                    "outline-variant": "#c3c6d7",
+                    "on-secondary-container": "#596372",
+                    "tertiary-fixed-dim": "#ffb596",
+                    "surface-bright": "#f8f9fa",
+                    "surface-container-lowest": "#ffffff",
+                    "on-primary-fixed": "#00174b",
+                    "inverse-surface": "#2e3132",
+                    "on-primary-fixed-variant": "#003ea8",
+                    "primary-fixed": "#dbe1ff",
+                    "primary-container": "#2563eb",
+                    "inverse-on-surface": "#f0f1f2",
+                    "surface-container-low": "#f3f4f5",
+                    "on-tertiary-container": "#ffede6",
+                    "outline": "#737686",
+                    "error-container": "#ffdad6",
+                    "secondary-fixed-dim": "#bdc7d8",
+                    "surface-tint": "#0053db",
+                    "surface-container-high": "#e7e8e9",
+                    "on-surface": "#191c1d",
+                    "primary-fixed-dim": "#b4c5ff",
+                    "on-error": "#ffffff",
+                    "on-tertiary-fixed": "#360f00",
+                    "secondary-container": "#d6e0f1",
+                    "on-secondary": "#ffffff",
+                    "surface-dim": "#d9dadb",
+                    "on-primary-container": "#eeefff",
+                    "primary": "#004ac6",
+                    "secondary-fixed": "#d9e3f4",
+                    "on-background": "#191c1d"
+            },
+            "borderRadius": {
+                    "DEFAULT": "0.125rem",
+                    "lg": "0.25rem",
+                    "xl": "0.5rem",
+                    "full": "0.75rem"
+            },
+            "spacing": {
+                    "unit": "4px",
+                    "container-max": "1280px",
+                    "gutter": "24px",
+                    "margin-desktop": "40px",
+                    "margin-mobile": "16px",
+                    "reading-width": "720px"
+            },
+            "fontFamily": {
+                    "body-sm": ["Open Sans"],
+                    "headline-lg": ["Open Sans"],
+                    "label-md": ["Open Sans"],
+                    "body-md": ["Open Sans"],
+                    "title-lg": ["Open Sans"],
+                    "display": ["Open Sans"],
+                    "headline-lg-mobile": ["Open Sans"],
+                    "headline-md": ["Open Sans"],
+                    "body-lg": ["Open Sans"]
+            },
+            "fontSize": {
+                    "body-sm": ["14px", {"lineHeight": "20px", "fontWeight": "400"}],
+                    "headline-lg": ["32px", {"lineHeight": "40px", "letterSpacing": "-0.01em", "fontWeight": "600"}],
+                    "label-md": ["12px", {"lineHeight": "16px", "letterSpacing": "0.05em", "fontWeight": "600"}],
+                    "body-md": ["16px", {"lineHeight": "26px", "fontWeight": "400"}],
+                    "title-lg": ["20px", {"lineHeight": "28px", "fontWeight": "600"}],
+                    "display": ["48px", {"lineHeight": "56px", "letterSpacing": "-0.02em", "fontWeight": "700"}],
+                    "headline-lg-mobile": ["28px", {"lineHeight": "36px", "fontWeight": "600"}],
+                    "headline-md": ["24px", {"lineHeight": "32px", "fontWeight": "600"}],
+                    "body-lg": ["18px", {"lineHeight": "30px", "fontWeight": "400"}]
+            }
+          },
+        },
+      }
+    </script>
+<style>
+        body {
+            background-color: #f8f9fa;
+            font-family: 'Open Sans', sans-serif;
+            color: #191c1d;
+            overflow-x: hidden;
+        }
+        .material-symbols-outlined {
+            font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+            vertical-align: middle;
+        }
+        .canvas-shadow {
+            box-shadow: 0px 4px 12px rgba(0,0,0,0.05);
+        }
+        .scrollbar-hide::-webkit-scrollbar {
+            display: none;
+        }
+        .editor-content:focus {
+            outline: none;
+        }
+        .transition-soft {
+            transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+    </style>
+</head>
+<body class="bg-surface">
+<!-- TopAppBar Navigation Shell -->
+<header class="fixed top-0 left-0 right-0 h-16 bg-surface z-50 border-b border-outline-variant flex justify-between items-center px-margin-desktop">
+<div class="flex items-center gap-10">
+<span class="text-title-lg font-title-lg font-bold text-primary">ScholarWrite</span>
+<nav class="hidden md:flex items-center gap-8">
+<a class="text-secondary font-label-md text-label-md hover:text-primary transition-colors" href="#">Home</a>
+<a class="text-secondary font-label-md text-label-md hover:text-primary transition-colors" href="#">Research Areas</a>
+<a class="text-secondary font-label-md text-label-md hover:text-primary transition-colors" href="#">Project Management</a>
+</nav>
+</div>
+<div class="flex items-center gap-4">
+<button class="px-4 py-2 border border-outline-variant text-secondary font-label-md text-label-md rounded hover:bg-surface-container-high transition-soft">
+                Save
+            </button>
+<button class="px-4 py-2 bg-primary-container text-on-primary font-label-md text-label-md rounded hover:opacity-90 transition-soft">
+                Export
+            </button>
+<div class="ml-2">
+<span class="material-symbols-outlined text-outline cursor-pointer hover:text-primary" data-icon="account_circle">account_circle</span>
+</div>
+</div>
+</header>
+<!-- Main App Layout -->
+<div class="pt-16 flex h-screen overflow-hidden">
+<!-- Left Margin (Dynamic) -->
+<div class="hidden lg:block w-16"></div>
+<!-- Central Writing Canvas -->
+<main class="flex-1 flex flex-col items-center overflow-y-auto scrollbar-hide py-12 px-margin-mobile md:px-gutter">
+<!-- Floating Formatting Toolbar -->
+<div class="sticky top-4 z-40 mb-8 bg-surface-container-lowest border border-outline-variant rounded-xl p-1 flex items-center gap-1 canvas-shadow">
+<button class="p-2 hover:bg-surface-container-high rounded text-secondary transition-soft" title="Bold">
+<span class="material-symbols-outlined" data-icon="format_bold">format_bold</span>
+</button>
+<button class="p-2 hover:bg-surface-container-high rounded text-secondary transition-soft" title="Italic">
+<span class="material-symbols-outlined" data-icon="format_italic">format_italic</span>
+</button>
+<button class="p-2 hover:bg-surface-container-high rounded text-secondary transition-soft" title="Underline">
+<span class="material-symbols-outlined" data-icon="format_underlined">format_underlined</span>
+</button>
+<div class="w-px h-6 bg-outline-variant mx-1"></div>
+<button class="p-2 hover:bg-surface-container-high rounded text-secondary transition-soft" title="Align Left">
+<span class="material-symbols-outlined" data-icon="format_align_left">format_align_left</span>
+</button>
+<button class="p-2 hover:bg-surface-container-high rounded text-secondary transition-soft" title="Align Center">
+<span class="material-symbols-outlined" data-icon="format_align_center">format_align_center</span>
+</button>
+<div class="w-px h-6 bg-outline-variant mx-1"></div>
+<button class="p-2 hover:bg-surface-container-high rounded text-secondary transition-soft" title="Bullet Points">
+<span class="material-symbols-outlined" data-icon="format_list_bulleted">format_list_bulleted</span>
+</button>
+<button class="p-2 hover:bg-surface-container-high rounded text-secondary transition-soft" title="Quote">
+<span class="material-symbols-outlined" data-icon="format_quote">format_quote</span>
+</button>
+<div class="w-px h-6 bg-outline-variant mx-1"></div>
+<button class="p-2 hover:bg-surface-container-high rounded text-primary transition-soft font-bold flex items-center gap-1 px-3" title="Insert Citation">
+<span class="material-symbols-outlined text-[18px]" data-icon="add_circle">add_circle</span>
+<span class="font-label-md text-label-md uppercase tracking-wider">Cite</span>
+</button>
+</div>
+<!-- Page Canvas -->
+<div class="w-full max-w-[720px] min-h-[1056px] bg-white border border-outline-variant p-16 md:p-24 canvas-shadow relative">
+<div class="mb-12">
+<input class="w-full font-headline-lg text-headline-lg border-none focus:ring-0 p-0 placeholder-outline-variant text-on-surface" placeholder="Enter Literature Review Title..." type="text">
+
+</div>
+<div class="editor-content font-body-md text-body-md text-on-surface leading-relaxed min-h-[600px]">
+<p class="mb-6">The transition toward sustainable urban infrastructure has emerged as a critical focal point in contemporary urban planning literature. As global populations continue to concentrate in metropolitan areas, the strain on existing resource management systems necessitates a radical rethink of how cities operate. (Smith et al., 2022)</p>
+<h2 class="font-title-lg text-title-lg mt-10 mb-4 text-on-surface">Integrating Nature-Based Solutions</h2>
+<p class="mb-6">Nature-based solutions (NbS) offer a promising avenue for mitigating climate-related risks while simultaneously enhancing biodiversity and public health. Recent studies by the Global Institute for Sustainability suggest that distributed green roofs and permeable pavements can reduce urban heat island effects by up to 3.2°C during peak summer months.</p>
+<p class="mb-6">However, the implementation of these technologies often faces significant socio-political barriers. Funding mechanisms remain fragmented, and long-term maintenance costs are frequently undervalued in initial budget assessments. (Jordan &amp; Miller, 2021) Furthermore, the equitable distribution of green space remains a contentious issue in high-density developments.</p>
+<p class="mb-6 text-outline">Click here to continue writing...</p>
+</div>
+</div>
+<!-- Bottom Stats -->
+<div class="mt-8 mb-12 flex gap-6 font-label-md text-label-md text-secondary">
+<span class="">Words: 428</span>
+<span class="">Characters: 2,842</span>
+<span class="">Reading Time: 2 min</span>
+</div>
+</main>
+<!-- Right SideNavBar (Research Assistant / Sources) -->
+<aside class="hidden xl:flex w-80 bg-surface-container-low border-l border-outline-variant flex-col overflow-hidden">
+<div class="p-gutter border-b border-outline-variant bg-surface-container-low">
+<div class="flex items-center gap-3 mb-4">
+<div class="w-10 h-10 bg-primary-container rounded flex items-center justify-center">
+<span class="material-symbols-outlined text-white" data-icon="library_books">library_books</span>
+</div>
+<div>
+<h2 class="font-headline-md text-[18px] text-primary">Sources</h2>
+<p class="font-body-sm text-[12px] text-secondary">Literature Analysis</p>
+</div>
+</div>
+<div class="relative group">
+<input class="w-full bg-surface-container-high border-none rounded-lg pl-10 pr-4 py-2 font-body-sm text-body-sm focus:ring-1 focus:ring-primary transition-soft" placeholder="Find citation..." type="text">
+<span class="material-symbols-outlined absolute left-3 top-2.5 text-outline text-[18px]" data-icon="search">search</span>
+</div>
+</div>
+<div class="flex-1 overflow-y-auto p-4 space-y-4">
+<!-- Source Card 1 -->
+<div class="bg-surface-container-lowest p-4 rounded border border-outline-variant hover:border-primary transition-soft cursor-pointer group">
+<div class="flex justify-between items-start mb-2">
+<span class="font-label-md text-[10px] text-primary bg-primary-fixed px-2 py-0.5 rounded uppercase">Peer Reviewed</span>
+<button class="text-outline opacity-0 group-hover:opacity-100 transition-opacity">
+<span class="material-symbols-outlined text-[16px]" data-icon="more_vert">more_vert</span>
+</button>
+</div>
+<h3 class="font-title-lg text-[14px] leading-tight mb-2">Sustainable Urbanism: A Decade in Review</h3>
+<p class="font-body-sm text-[12px] text-secondary mb-3">Smith, J., Roberts, D. (2022). Urban Policy Journal.</p>
+<div class="flex flex-wrap gap-2">
+<span class="px-2 py-0.5 bg-surface-container-high text-secondary text-[10px] rounded">Sustainability</span>
+<span class="px-2 py-0.5 bg-surface-container-high text-secondary text-[10px] rounded">City Planning</span>
+</div>
+</div>
+<!-- Source Card 2 -->
+<div class="bg-surface-container-lowest p-4 rounded border border-outline-variant hover:border-primary transition-soft cursor-pointer group">
+<div class="flex justify-between items-start mb-2">
+<span class="font-label-md text-[10px] text-tertiary bg-tertiary-fixed px-2 py-0.5 rounded uppercase">Article</span>
+</div>
+<h3 class="font-title-lg text-[14px] leading-tight mb-2">The Socio-Economic Impact of Green Space</h3>
+<p class="font-body-sm text-[12px] text-secondary mb-3">Jordan, L., Miller, T. (2021). Environmental Research.</p>
+<div class="flex flex-wrap gap-2">
+<span class="px-2 py-0.5 bg-surface-container-high text-secondary text-[10px] rounded">Sociology</span>
+</div>
+</div>
+<!-- Source Card 3 (Placeholder for Bento aesthetic) -->
+<div class="bg-surface-container-lowest p-4 rounded border border-outline-variant hover:border-primary transition-soft cursor-pointer group">
+<h3 class="font-title-lg text-[14px] leading-tight mb-2">Climate Resilience in Coastal Metropolises</h3>
+<p class="font-body-sm text-[12px] text-secondary mb-3">Wong, K. (2023). Global Climate Forum.</p>
+<div class="mt-2 flex items-center gap-2 text-primary font-label-md text-[11px]">
+<span class="material-symbols-outlined text-[14px]" data-icon="visibility">visibility</span>
+                        View abstract
+                    </div>
+</div>
+</div>
+<div class="p-gutter bg-surface-container-high border-t border-outline-variant">
+<button class="w-full py-3 bg-white border border-outline text-on-surface font-label-md text-label-md rounded-lg flex items-center justify-center gap-2 hover:bg-primary-container hover:text-white hover:border-primary-container transition-soft group">
+<span class="material-symbols-outlined text-[18px] group-hover:scale-110 transition-transform" data-icon="add">add</span>
+                    Add Source
+                </button>
+</div>
+</aside>
+</div>
+<!-- Micro-interaction Scripts -->
+<script>
+        document.querySelectorAll('button').forEach(button => {
+            button.addEventListener('click', function() {
+                this.classList.add('scale-95');
+                setTimeout(() => this.classList.remove('scale-95'), 150);
+            });
+        });
+
+        // Basic Formatting Sim (Visual only for this demo)
+        document.querySelectorAll('.material-symbols-outlined').forEach(icon => {
+            if (icon.parentElement.tagName === 'BUTTON') {
+                icon.parentElement.addEventListener('click', () => {
+                    const isActive = icon.parentElement.classList.contains('bg-primary-fixed');
+                    if (isActive) {
+                        icon.parentElement.classList.remove('bg-primary-fixed', 'text-primary');
+                        icon.parentElement.classList.add('text-secondary');
+                    } else {
+                        // Toggle logic for certain buttons
+                        if (icon.getAttribute('data-icon').startsWith('format_')) {
+                             icon.parentElement.classList.add('bg-primary-fixed', 'text-primary');
+                             icon.parentElement.classList.remove('text-secondary');
+                        }
+                    }
+                });
+            }
+        });
+    </script>
+
+
+
+
+</body></html>

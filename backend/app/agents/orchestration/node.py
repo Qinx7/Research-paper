@@ -11,6 +11,8 @@ class AgentNodeResult:
     data_delta: dict[str, Any] = field(default_factory=dict)
     evidence_delta: list[dict[str, Any]] = field(default_factory=list)
     messages: list[str] = field(default_factory=list)
+    warnings: list[str] = field(default_factory=list)
+    artifacts: list[dict[str, Any]] = field(default_factory=list)
     error: str | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
 
@@ -21,6 +23,8 @@ class AgentNodeResult:
         data_delta: dict[str, Any] | None = None,
         evidence_delta: list[dict[str, Any]] | None = None,
         messages: list[str] | None = None,
+        warnings: list[str] | None = None,
+        artifacts: list[dict[str, Any]] | None = None,
         metadata: dict[str, Any] | None = None,
     ) -> "AgentNodeResult":
         """构造成功结果。"""
@@ -29,6 +33,8 @@ class AgentNodeResult:
             data_delta=data_delta or {},
             evidence_delta=evidence_delta or [],
             messages=messages or [],
+            warnings=warnings or [],
+            artifacts=artifacts or [],
             metadata=metadata or {},
         )
 
@@ -48,6 +54,9 @@ class AgentNode:
 
     name = "unnamed_node"
     description = ""
+    node_type = "task"
+    label = ""
+    visible = False
     critical = True
 
     def should_run(self, state) -> bool:

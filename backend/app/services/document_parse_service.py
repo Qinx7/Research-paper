@@ -7,8 +7,6 @@ import os
 import re
 from dataclasses import dataclass, field
 
-from docx import Document
-
 from ..core.config import settings
 
 
@@ -166,6 +164,7 @@ def _decode_text(data: bytes) -> str:
 
 def _extract_docx_text(data: bytes) -> str:
     try:
+        from docx import Document
         doc = Document(io.BytesIO(data))
         paragraphs = [paragraph.text.strip() for paragraph in doc.paragraphs if paragraph.text.strip()]
         return "\n".join(paragraphs)

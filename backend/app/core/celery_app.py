@@ -10,9 +10,7 @@ celery_app = Celery(
     # 只订阅本项目相关任务，避免自动发现意外模块
     include=[
         "app.tasks.ppt_task",
-        "app.tasks.proposal_task",
         "app.tasks.paper_task",
-        "app.tasks.defense_ppt_task",
     ],
 )
 

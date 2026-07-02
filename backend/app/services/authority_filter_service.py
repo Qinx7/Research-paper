@@ -1,8 +1,11 @@
 """权威来源筛选服务：对文献来源与质量标签做可解释、保守识别。"""
-from dataclasses import dataclass, field
+from __future__ import annotations
+
 from collections import Counter
+from dataclasses import dataclass, field
 import re
 
+from .authority_catalog_service import authority_catalog_enabled, match_authority_catalog
 from .literature_search import PaperResult
 
 
@@ -26,7 +29,6 @@ AUTHORITY_LABELS = {
     "pku_core": "北大核心",
 }
 
-# 只放入相对稳定且常见的中文核心刊物名称，避免把普通期刊误标为北大核心。
 PKU_CORE_JOURNAL_WHITELIST = {
     "电化教育研究",
     "中国电化教育",
@@ -48,12 +50,7 @@ PKU_CORE_NORMALIZED_WHITELIST: set[str] = set()
 
 
 def evaluate_paper_authority(paper: PaperResult) -> AuthorityEvaluation:
-    """识别一篇文献可核验的权威标签。
-
-    IEEE/ACM 可通过出版物名称、URL、DOI 域名较高置信识别；北大核心只通过
-    本地保守白名单识别。EI/JCR/中科院分区需要授权目录或官方数据，当前只
-    输出待核验标签，不参与筛选命中。
-    """
+    """识别一篇文献可核验的权威标签。"""
     text = _paper_text(paper)
     venue_text = (paper.venue or "").lower()
     url_text = (paper.url or "").lower()
@@ -64,11 +61,20 @@ def evaluate_paper_authority(paper: PaperResult) -> AuthorityEvaluation:
 
     if _matches_ieee(venue_text=venue_text, url_text=url_text, doi_text=doi_text):
         tags.append("ieee")
-        reasons.append("命中 IEEE 出版物名称或 IEEE Xplore 链接")
+        reasons.append("命中 IEEE 出版物名称、IEEE Xplore 链接或 DOI 前缀")
 
     if _matches_acm(venue_text=venue_text, url_text=url_text, doi_text=doi_text):
         tags.append("acm")
-        reasons.append("命中 ACM 出版物名称或 ACM Digital Library 链接")
+        reasons.append("命中 ACM 出版物名称、ACM Digital Library 链接或 DOI 前缀")
+
+    catalog_matches = match_authority_catalog(
+        title=paper.title,
+        doi=paper.doi,
+        venue=paper.venue,
+    )
+    for tag, match_info in catalog_matches.items():
+        tags.append(tag)
+        reasons.append(match_info.get("reason") or "本地授权目录核验命中")
 
     venue = (paper.venue or "").strip()
     if venue and _normalize_journal_name(venue) in _normalized_pku_core_whitelist():
@@ -80,13 +86,17 @@ def evaluate_paper_authority(paper: PaperResult) -> AuthorityEvaluation:
 
     tags = _dedupe(tags)
     pending_tags = _dedupe(pending_tags)
+
     if tags:
         verified_level = "verified"
         authority_level = "verified_authority"
     elif pending_tags:
         verified_level = "unverified"
         authority_level = "needs_external_verification"
-        reasons.append("EI/JCR/中科院分区需要官方或授权目录核验，当前不作为已认证标签")
+        if authority_catalog_enabled():
+            reasons.append("当前本地授权目录未命中对应期刊或 DOI，这些标签暂只保留为待核验")
+        else:
+            reasons.append("EI/JCR/中科院分区需要本地授权目录核验，当前未配置目录，因此不作为已核验标签")
     else:
         verified_level = "unverified"
         authority_level = "none"
@@ -131,6 +141,7 @@ def summarize_authority_hits(papers: list[dict]) -> dict[str, object]:
             )
             verified_tags = evaluation.tags
             pending_tags = evaluation.pending_tags
+
         for tag in verified_tags:
             verified_counts[str(tag)] += 1
         for tag in pending_tags:
@@ -203,15 +214,11 @@ def _detect_pending_authority_tags(text: str) -> list[str]:
     return tags
 
 
-def _normalize_text(value: str) -> str:
-    return re.sub(r"\s+", "", value.strip().lower())
-
-
 def _normalize_journal_name(value: str) -> str:
     normalized = value.strip().lower()
-    normalized = normalized.replace("《", "").replace("》", "")
-    normalized = re.sub(r"[·•\-_:/\\,.;，。；：\s]+", "", normalized)
     normalized = re.sub(r"[（(][^)）]*[)）]$", "", normalized)
+    normalized = normalized.replace("《", "").replace("》", "")
+    normalized = re.sub(r"[路\-_:/\\,.;，。；（）()\s]+", "", normalized)
     return normalized
 
 
@@ -231,9 +238,10 @@ def _build_authority_overview(verified_counts: Counter, pending_counts: Counter)
         for tag, count in verified_counts.most_common()
     )
     pending_text = "、".join(
-        f"{AUTHORITY_LABELS.get(tag, tag)}待核验 {count} 篇"
+        f"{AUTHORITY_LABELS.get(tag, tag)} 待核验 {count} 篇"
         for tag, count in pending_counts.most_common()
     )
+
     if verified_text and pending_text:
         return f"已核验权威命中：{verified_text}；待核验标签：{pending_text}。"
     if verified_text:

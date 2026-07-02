@@ -41,6 +41,40 @@ class ProjectDocumentSearchServiceTests(unittest.TestCase):
         self.assertIn("资料正文命中", results[0]["score_reasons"])
         self.assertEqual(results[0]["section_title"], "第一章 绪论")
 
+    def test_search_project_document_chunks_merges_keyword_and_semantic_hits(self):
+        from app.services.project_document_search_service import merge_project_document_search_results
+
+        keyword_hits = [
+            {
+                "chunk_id": "chunk-a",
+                "title": "访谈记录",
+                "score": 5,
+                "score_reasons": ["资料正文命中"],
+            }
+        ]
+        semantic_hits = [
+            {
+                "chunk_id": "chunk-a",
+                "title": "访谈记录",
+                "score": 0.83,
+                "score_reasons": ["语义相似 0.83"],
+            },
+            {
+                "chunk_id": "chunk-b",
+                "title": "系统设计说明",
+                "score": 0.79,
+                "score_reasons": ["语义相似 0.79"],
+            },
+        ]
+
+        merged = merge_project_document_search_results(keyword_hits, semantic_hits, limit=5)
+
+        self.assertEqual(len(merged), 2)
+        self.assertEqual(merged[0]["chunk_id"], "chunk-a")
+        self.assertIn("资料正文命中", merged[0]["score_reasons"])
+        self.assertIn("语义相似 0.83", merged[0]["score_reasons"])
+        self.assertEqual(merged[1]["chunk_id"], "chunk-b")
+
 
 if __name__ == "__main__":
     unittest.main()

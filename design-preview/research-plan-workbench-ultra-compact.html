@@ -1,0 +1,700 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>研究方案页紧凑样板</title>
+  <style>
+    :root {
+      --bg: #f7f9fb;
+      --panel: #ffffff;
+      --panel-soft: #f3f7fb;
+      --line: #dfe7ef;
+      --line-strong: #cbd8e6;
+      --text: #16202a;
+      --muted: #647282;
+      --faint: #93a0ad;
+      --blue: #168fe3;
+      --blue-dark: #0d72bd;
+      --blue-soft: #eaf6ff;
+      --green: #1f9d68;
+      --shadow: 0 14px 32px rgba(15, 35, 55, 0.07);
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      padding: 16px;
+      background: linear-gradient(180deg, #fbfdff 0%, var(--bg) 100%);
+      color: var(--text);
+      font-family: "Segoe UI", "Microsoft YaHei", sans-serif;
+    }
+
+    .shell {
+      width: min(1480px, calc(100vw - 32px));
+      height: min(720px, calc(100vh - 32px));
+      min-height: 660px;
+      margin: 0 auto;
+      overflow: hidden;
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      background: rgba(255,255,255,0.9);
+      box-shadow: var(--shadow);
+    }
+
+    .layout {
+      display: grid;
+      grid-template-columns: 260px minmax(0, 1fr);
+      height: 100%;
+    }
+
+    aside,
+    main {
+      min-height: 0;
+    }
+
+    .sidebar {
+      display: flex;
+      min-width: 0;
+      min-height: 0;
+      flex-direction: column;
+      border-right: 1px solid var(--line);
+      background: #fbfcfe;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 12px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .logo {
+      display: grid;
+      width: 30px;
+      height: 30px;
+      place-items: center;
+      border-radius: 9px;
+      background: linear-gradient(145deg, #26a7f2, var(--blue));
+      color: #fff;
+      font-size: 12px;
+      font-weight: 700;
+    }
+
+    .brand strong {
+      display: block;
+      font-size: 12px;
+      line-height: 1.2;
+    }
+
+    .brand span {
+      display: block;
+      margin-top: 3px;
+      color: var(--faint);
+      font-size: 10px;
+    }
+
+    .nav-group {
+      padding: 9px 8px 8px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .label {
+      margin: 0 6px 8px;
+      color: var(--faint);
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+    }
+
+    .nav-row {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 5px;
+    }
+
+    .nav-item {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 4px;
+      height: 32px;
+      border: 1px solid transparent;
+      border-radius: 9px;
+      color: var(--muted);
+      font-size: 11px;
+      white-space: nowrap;
+    }
+
+    .nav-item.active {
+      border-color: #cfe4f8;
+      background: var(--blue-soft);
+      color: var(--text);
+      font-weight: 700;
+    }
+
+    .nav-icon {
+      display: grid;
+      width: 19px;
+      height: 19px;
+      place-items: center;
+      border-radius: 7px;
+      background: #eef5fb;
+      color: var(--blue);
+      font-size: 10px;
+      font-weight: 700;
+    }
+
+    .research-dock {
+      display: flex;
+      min-height: 0;
+      flex: 1;
+      flex-direction: column;
+      background: rgba(247,249,251,0.72);
+    }
+
+    .dock-head {
+      padding: 14px 12px 12px;
+      border-bottom: 1px solid var(--line);
+      background: rgba(255,255,255,0.82);
+    }
+
+    .dock-head h1 {
+      margin: 0;
+      font-size: 17px;
+      line-height: 1.3;
+      font-weight: 750;
+    }
+
+    .dock-head p {
+      margin: 7px 0 13px;
+      color: var(--muted);
+      font-size: 11px;
+      line-height: 1.6;
+    }
+
+    .field {
+      width: 100%;
+      height: 36px;
+      margin-top: 7px;
+      padding: 0 10px;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: var(--panel);
+      color: var(--text);
+      font-size: 12px;
+      outline: none;
+    }
+
+    .direction-list {
+      min-height: 0;
+      flex: 1;
+      overflow: auto;
+      padding: 10px;
+    }
+
+    .direction-card {
+      padding: 11px;
+      border: 1px solid var(--line);
+      border-radius: 13px;
+      background: var(--panel);
+      box-shadow: 0 5px 14px rgba(15,35,55,0.035);
+    }
+
+    .direction-card.active {
+      border-color: #bfdcf5;
+      background: #f8fcff;
+    }
+
+    .direction-card h2 {
+      margin: 0;
+      font-size: 13px;
+      line-height: 1.45;
+      font-weight: 750;
+    }
+
+    .meta-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 4px;
+      margin-top: 9px;
+    }
+
+    .chip {
+      display: inline-flex;
+      align-items: center;
+      height: 21px;
+      padding: 0 7px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      background: #fff;
+      color: var(--muted);
+      font-size: 9.5px;
+      font-weight: 700;
+      white-space: nowrap;
+    }
+
+    .chip.blue {
+      border-color: #cfe4f8;
+      background: var(--blue-soft);
+      color: var(--blue-dark);
+    }
+
+    .chip.green {
+      border-color: #ccebdd;
+      background: #ecfdf5;
+      color: var(--green);
+    }
+
+    .direction-card p {
+      margin: 9px 0 0;
+      color: var(--muted);
+      font-size: 10.5px;
+      line-height: 1.55;
+    }
+
+    .user {
+      padding: 10px;
+      border-top: 1px solid var(--line);
+      background: #fbfcfe;
+    }
+
+    .user-card {
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      padding: 9px;
+      border: 1px solid var(--line);
+      border-radius: 11px;
+      background: var(--panel);
+      font-size: 11px;
+    }
+
+    .user-card span {
+      color: var(--faint);
+    }
+
+    .workbench {
+      min-width: 0;
+      min-height: 0;
+      background: #ffffff;
+    }
+
+    .workbench-inner {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 286px;
+      gap: 14px;
+      height: 100%;
+      padding: 16px;
+    }
+
+    .main-panel,
+    .side-panel {
+      min-height: 0;
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      background: var(--panel);
+    }
+
+    .main-panel {
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    .title-bar {
+      padding: 14px 16px 12px;
+      border-bottom: 1px solid var(--line);
+      background: linear-gradient(180deg, #ffffff 0%, #f9fbfd 100%);
+    }
+
+    .topline {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 9px;
+    }
+
+    .topline .meta-row {
+      margin-top: 0;
+    }
+
+    .primary-btn {
+      height: 32px;
+      padding: 0 13px;
+      border: 0;
+      border-radius: 9px;
+      background: var(--blue);
+      color: #fff;
+      font-size: 12px;
+      font-weight: 700;
+    }
+
+    .title-bar h2 {
+      margin: 0;
+      max-width: 840px;
+      font-size: 18px;
+      line-height: 1.35;
+    }
+
+    .title-bar p {
+      margin: 8px 0 0;
+      max-width: 900px;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.65;
+    }
+
+    .content-grid {
+      display: grid;
+      grid-template-columns: 1.25fr 1fr;
+      gap: 12px;
+      min-height: 0;
+      flex: 1;
+      padding: 12px;
+    }
+
+    .block {
+      min-height: 0;
+      padding: 12px;
+      overflow: hidden;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: var(--panel-soft);
+    }
+
+    .block h3 {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin: 0 0 10px;
+      color: var(--text);
+      font-size: 12px;
+    }
+
+    .block h3 span {
+      color: var(--faint);
+      font-size: 10px;
+      font-weight: 500;
+    }
+
+    .points {
+      display: grid;
+      gap: 8px;
+      margin: 0;
+      padding: 0;
+      list-style: none;
+    }
+
+    .points li {
+      display: grid;
+      grid-template-columns: 24px minmax(0, 1fr);
+      gap: 8px;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.55;
+    }
+
+    .points b {
+      display: grid;
+      width: 24px;
+      height: 21px;
+      place-items: center;
+      border-radius: 6px;
+      background: #fff;
+      color: var(--blue);
+      font-size: 10px;
+    }
+
+    .compact-table {
+      display: grid;
+      gap: 7px;
+    }
+
+    .compact-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      min-height: 30px;
+      padding: 0 9px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fff;
+      color: var(--muted);
+      font-size: 11px;
+    }
+
+    .compact-row strong {
+      color: var(--text);
+      font-size: 12px;
+    }
+
+    .side-panel {
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      background: #fbfdff;
+    }
+
+    .side-head {
+      padding: 13px;
+      border-bottom: 1px solid var(--line);
+      background: #fff;
+    }
+
+    .side-head h3 {
+      margin: 0;
+      font-size: 13px;
+    }
+
+    .side-head p {
+      margin: 5px 0 0;
+      color: var(--faint);
+      font-size: 11px;
+    }
+
+    .side-body {
+      display: grid;
+      gap: 10px;
+      min-height: 0;
+      overflow: auto;
+      padding: 10px;
+    }
+
+    .tool-section {
+      padding: 10px;
+      border: 1px solid var(--line);
+      border-radius: 11px;
+      background: #fff;
+    }
+
+    .tool-section h4 {
+      margin: 0 0 8px;
+      color: var(--text);
+      font-size: 11px;
+    }
+
+    .score {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 7px 8px;
+      align-items: center;
+      color: var(--muted);
+      font-size: 11px;
+    }
+
+    .bar {
+      height: 5px;
+      overflow: hidden;
+      border-radius: 999px;
+      background: #e8eef5;
+    }
+
+    .bar i {
+      display: block;
+      height: 100%;
+      border-radius: inherit;
+      background: var(--blue);
+    }
+
+    .action {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      height: 32px;
+      padding: 0 9px;
+      border: 1px solid var(--line);
+      border-radius: 9px;
+      background: #fff;
+      color: var(--text);
+      font-size: 11px;
+    }
+
+    .action.primary {
+      border-color: #b7dcfb;
+      background: var(--blue-soft);
+      color: var(--blue-dark);
+      font-weight: 700;
+    }
+
+    .mini-note {
+      padding: 9px;
+      border-radius: 9px;
+      background: #f7f9fb;
+      color: var(--muted);
+      font-size: 11px;
+      line-height: 1.55;
+    }
+
+    @media (max-width: 1180px) {
+      .shell {
+        height: auto;
+        min-height: 0;
+      }
+
+      .layout,
+      .workbench-inner,
+      .content-grid {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <div class="layout">
+      <aside class="sidebar">
+        <div class="brand">
+          <div class="logo">研</div>
+          <div>
+            <strong>Scholar Workbench</strong>
+            <span>研究流程工作台</span>
+          </div>
+        </div>
+
+        <div class="nav-group">
+          <p class="label">功能模块</p>
+          <div class="nav-row">
+            <div class="nav-item"><span class="nav-icon">搜</span>检索</div>
+            <div class="nav-item active"><span class="nav-icon">研</span>研究</div>
+            <div class="nav-item"><span class="nav-icon">写</span>写作</div>
+          </div>
+        </div>
+
+        <section class="research-dock">
+          <div class="dock-head">
+            <h1>研究方案</h1>
+            <p>预览候选方向，确认后承接到项目设计、开题材料和论文写作。</p>
+            <select class="field">
+              <option>具身智能项目</option>
+            </select>
+            <input class="field" placeholder="搜索候选方向..." />
+          </div>
+
+          <div class="direction-list">
+            <article class="direction-card active">
+              <h2>多类型 AI 在营销中的协同与冲突实证研究</h2>
+              <div class="meta-row">
+                <span class="chip blue">当前方案</span>
+                <span class="chip green">已有项目设计</span>
+                <span class="chip">7/10</span>
+              </div>
+              <p>选题研究 · 2 个核心问题 · 可继续承接</p>
+            </article>
+          </div>
+        </section>
+
+        <div class="user">
+          <div class="user-card">
+            <div class="logo" style="width:28px;height:28px;border-radius:50%;">U</div>
+            <div><strong>研究员用户</strong><br /><span>免费版 · 设置</span></div>
+          </div>
+        </div>
+      </aside>
+
+      <main class="workbench">
+        <div class="workbench-inner">
+          <section class="main-panel">
+            <div class="title-bar">
+              <div class="topline">
+                <div class="meta-row">
+                  <span class="chip">选题研究</span>
+                  <span class="chip blue">当前预览</span>
+                  <span class="chip green">已承接</span>
+                </div>
+                <button class="primary-btn">设为当前方向</button>
+              </div>
+              <h2>多类型 AI 在营销中的协同与冲突实证研究</h2>
+              <p>围绕机械型、思考型与情感型 AI 在真实营销流程中的分工、协同和冲突机制，形成可验证的实证研究方案。</p>
+            </div>
+
+            <div class="content-grid">
+              <div class="block">
+                <h3>核心研究问题 <span>Research Questions</span></h3>
+                <ul class="points">
+                  <li><b>01</b><span>不同类型 AI 在营销触点中如何形成协同分工？</span></li>
+                  <li><b>02</b><span>多 AI 系统在目标、语气与用户体验上会产生哪些冲突？</span></li>
+                  <li><b>03</b><span>用户反馈如何反向影响 AI 协同策略的优化？</span></li>
+                </ul>
+              </div>
+
+              <div class="block">
+                <h3>方法与数据 <span>Methods</span></h3>
+                <ul class="points">
+                  <li><b>A</b><span>模拟实验与 A/B 测试，比较不同 AI 组合的营销效果。</span></li>
+                  <li><b>B</b><span>问卷调查与回归分析，验证用户信任和购买意愿变化。</span></li>
+                  <li><b>C</b><span>访谈材料用于解释冲突来源和协同边界。</span></li>
+                </ul>
+              </div>
+
+              <div class="block">
+                <h3>预期成果 <span>Outputs</span></h3>
+                <ul class="points">
+                  <li><b>01</b><span>多类型 AI 协同与冲突的实证模型。</span></li>
+                  <li><b>02</b><span>面向营销场景的协同策略框架。</span></li>
+                </ul>
+              </div>
+
+              <div class="block">
+                <h3>风险限制 <span>Risks</span></h3>
+                <div class="compact-table">
+                  <div class="compact-row"><span>模拟环境偏差</span><strong>中</strong></div>
+                  <div class="compact-row"><span>样本代表性不足</span><strong>中</strong></div>
+                  <div class="compact-row"><span>变量控制复杂</span><strong>高</strong></div>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <aside class="side-panel">
+            <div class="side-head">
+              <h3>方案承接面板</h3>
+              <p>只保留当前决策需要的信息和操作。</p>
+            </div>
+
+            <div class="side-body">
+              <section class="tool-section">
+                <h4>评分概览</h4>
+                <div class="score">
+                  <span>文献基础</span><strong>6/10</strong><div class="bar"><i style="width:60%"></i></div><span></span>
+                  <span>创新性</span><strong>7/10</strong><div class="bar"><i style="width:70%"></i></div><span></span>
+                  <span>可行性</span><strong>8/10</strong><div class="bar"><i style="width:80%"></i></div><span></span>
+                  <span>论文价值</span><strong>7/10</strong><div class="bar"><i style="width:70%"></i></div><span></span>
+                </div>
+              </section>
+
+              <section class="tool-section">
+                <h4>承接状态</h4>
+                <div class="compact-table">
+                  <div class="compact-row"><span>研究方向</span><strong>已确认</strong></div>
+                  <div class="compact-row"><span>项目设计</span><strong>已生成</strong></div>
+                  <div class="compact-row"><span>开题材料</span><strong>待生成</strong></div>
+                </div>
+              </section>
+
+              <section class="tool-section">
+                <h4>下一步操作</h4>
+                <div class="compact-table">
+                  <div class="action primary">生成项目设计 <span>→</span></div>
+                  <div class="action">生成开题报告 <span>→</span></div>
+                  <div class="action">进入论文写作 <span>→</span></div>
+                </div>
+              </section>
+
+              <section class="tool-section">
+                <h4>材料依据</h4>
+                <div class="mini-note">当前方案已关联 12 条候选文献证据。正式页面中这里只显示来源数量、覆盖方向和缺口提示，不展开成长列表。</div>
+              </section>
+            </div>
+          </aside>
+        </div>
+      </main>
+    </div>
+  </div>
+</body>
+</html>

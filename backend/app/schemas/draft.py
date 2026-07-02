@@ -81,6 +81,63 @@ class DraftOutline(BaseModel):
     notes: str | None = None
 
 
+class WritingPlanResult(BaseModel):
+    goal: str
+    recommended_structure: list[str]
+    evidence_gaps: list[str]
+    risks: list[str]
+    notes: str
+
+
+class WritingReviewIssue(BaseModel):
+    severity: str
+    title: str
+    detail: str
+    suggestion: str
+
+
+class WritingReviewResult(BaseModel):
+    chapter_key: str
+    passed: bool
+    summary: str
+    issues: list[WritingReviewIssue]
+    focus_areas: list[str]
+
+
+class WritingRevisionResult(BaseModel):
+    chapter_key: str
+    title: str
+    content: str
+    change_summary: list[str]
+    resolved_issues: list[str]
+    citations: list[str]
+    data_based: bool
+
+
+class FullDraftReviewResult(BaseModel):
+    passed: bool
+    summary: str
+    issues: list[WritingReviewIssue]
+    focus_areas: list[str]
+    chapter_flags: dict[str, list[str]]
+
+
+class FullDraftRevisionResult(BaseModel):
+    title: str
+    full_text: str
+    change_summary: list[str]
+    resolved_issues: list[str]
+    remaining_issues: list[str]
+
+
+class FullDraftGenerateResult(BaseModel):
+    suggested_title: str
+    generated_chapters: list[str]
+    skipped_chapters: list[str]
+    outline: dict
+    content: dict
+
+
 class DraftOut(BaseModel):
     id: str
     project_id: str

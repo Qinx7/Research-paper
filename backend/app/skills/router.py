@@ -6,15 +6,34 @@ from .registry import SkillRegistry
 
 
 DEFAULT_SKILL_ACTIONS: dict[tuple[str, str], str] = {
+    ("paper", "plan"): "paper.plan",
+    ("paper", "generate_outline"): "paper.outline_generate",
+    ("paper", "review_chapter"): "paper.review_pass",
+    ("paper", "apply_revision"): "paper.revision_apply",
+    ("paper", "review_full"): "paper.full_review_pass",
+    ("paper", "revise_full"): "paper.full_revision_apply",
     ("paper", "write_chapter"): "paper.chapter_draft",
     ("paper", "validate_chapter"): "paper.chapter_grounding",
+    ("research", "generate_directions"): "research.direction_generate",
+    ("research", "score_directions"): "research.direction_score",
+    ("research", "generate_design"): "research.project_design_generate",
+    ("ppt", "generate_project_pptx"): "ppt.project_pptx",
     ("ppt", "preview_html_deck"): "ppt.web_html_deck",
 }
 
 # 兼容旧名称 / 内部 workflow 语义
 DEFAULT_SKILL_ACTIONS.update({
+    ("paper", "outline_generate"): "paper.outline_generate",
+    ("paper", "review_pass"): "paper.review_pass",
+    ("paper", "revision_apply"): "paper.revision_apply",
+    ("paper", "full_review_pass"): "paper.full_review_pass",
+    ("paper", "full_revision_apply"): "paper.full_revision_apply",
     ("paper", "chapter_draft"): "paper.chapter_draft",
     ("paper", "chapter_grounding"): "paper.chapter_grounding",
+    ("research", "direction_generate"): "research.direction_generate",
+    ("research", "direction_score"): "research.direction_score",
+    ("research", "project_design_generate"): "research.project_design_generate",
+    ("ppt", "project_pptx"): "ppt.project_pptx",
 })
 
 

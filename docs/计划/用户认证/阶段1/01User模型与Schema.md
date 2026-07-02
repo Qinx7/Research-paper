@@ -1,9 +1,8 @@
-# 阶段1-01：User 模型 + Auth Schema
+﻿# 闃舵1-01锛歎ser 妯″瀷 + Auth Schema
 
-## 1.1 User 模型
+## 1.1 User 妯″瀷
 
-新建 `backend/app/models/user.py`：
-
+鏂板缓 `backend/app/models/user.py`锛?
 ```python
 class User(Base):
     __tablename__ = "users"
@@ -17,25 +16,22 @@ class User(Base):
     updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
 ```
 
-- `email` + `username` 双唯一标识
-- `is_active` 用于后续禁用账户
-- 密码存储 bcrypt hash，不存明文
+- `email` + `username` 鍙屽敮涓€鏍囪瘑
+- `is_active` 鐢ㄤ簬鍚庣画绂佺敤璐︽埛
+- 瀵嗙爜瀛樺偍 bcrypt hash锛屼笉瀛樻槑鏂?
+## 1.2 Project 妯″瀷鎵╁睍
 
-## 1.2 Project 模型扩展
-
-修改 `backend/app/models/project.py`，添加 `user_id` 字段：
-
+淇敼 `backend/app/models/project.py`锛屾坊鍔?`user_id` 瀛楁锛?
 ```python
-user_id = Column(UUID, ForeignKey("users.id"), nullable=True, comment="所属用户")
+user_id = Column(UUID, ForeignKey("users.id"), nullable=True, comment="鎵€灞炵敤鎴?)
 ```
 
-- `nullable=True`：历史数据 user_id 留空，不破坏现有数据
-- 新建项目时强制要求 user_id
+- `nullable=True`锛氬巻鍙叉暟鎹?user_id 鐣欑┖锛屼笉鐮村潖鐜版湁鏁版嵁
+- 鏂板缓椤圭洰鏃跺己鍒惰姹?user_id
 
 ## 1.3 Auth Schema
 
-新建 `backend/app/schemas/auth.py`：
-
+鏂板缓 `backend/app/schemas/auth.py`锛?
 ```python
 class UserRegisterRequest(BaseModel):
     email: str = Field(..., max_length=255)
@@ -43,8 +39,8 @@ class UserRegisterRequest(BaseModel):
     password: str = Field(..., min_length=6, max_length=128)
 
 class UserLoginRequest(BaseModel):
-    email: str = Field(..., description="邮箱地址")
-    password: str = Field(..., description="密码")
+    email: str = Field(..., description="閭鍦板潃")
+    password: str = Field(..., description="瀵嗙爜")
 
 class TokenResponse(BaseModel):
     access_token: str
@@ -61,10 +57,11 @@ class UserOut(BaseModel):
     created_at: str
 ```
 
-## 1.4 验证
+## 1.4 楠岃瘉
 
 ```python
 from backend.app.models.user import User
 from backend.app.models.project import Project
-# 确认模型可导入，字段正确
+# 纭妯″瀷鍙鍏ワ紝瀛楁姝ｇ‘
 ```
+

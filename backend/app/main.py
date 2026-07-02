@@ -15,7 +15,6 @@ from .api.research import router as research_router
 from .api.ppt import router as ppt_router
 from .api.agents import router as agents_router
 from .api.chat import router as chat_router
-from .api.proposal import router as proposal_router
 from .api.tasks import router as tasks_router
 from .api.outcomes import router as outcomes_router
 from .api.drafts import router as drafts_router
@@ -56,6 +55,7 @@ if settings.APP_ENV == "production":
 # 过渡期兼容：正式迁移应优先使用 Alembic；此引导仅用于当前环境兜底。
 if should_run_runtime_schema_bootstrap(settings):
     from .services.embedding_service import ensure_document_vectors_table
+    from .services.project_document_embedding_service import ensure_project_document_vectors_table
     from .services.schema_compat import (
         ensure_conversation_user_column,
         ensure_project_design_content_column,
@@ -71,6 +71,7 @@ if should_run_runtime_schema_bootstrap(settings):
         ensure_research_direction_content_column=ensure_research_direction_content_column,
         ensure_project_design_content_column=ensure_project_design_content_column,
         ensure_document_vectors_table=ensure_document_vectors_table,
+        ensure_project_document_vectors_table=ensure_project_document_vectors_table,
     )
 else:
     logger.info("已关闭运行时 schema 引导，数据库结构应通过 Alembic 迁移维护。")
@@ -95,7 +96,6 @@ app.include_router(research_router, prefix="/api")
 app.include_router(ppt_router, prefix="/api")
 app.include_router(agents_router, prefix="/api")
 app.include_router(chat_router, prefix="/api")
-app.include_router(proposal_router, prefix="/api")
 app.include_router(tasks_router, prefix="/api")
 app.include_router(outcomes_router, prefix="/api")
 app.include_router(drafts_router, prefix="/api")

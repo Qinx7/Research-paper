@@ -1,29 +1,24 @@
-# 阶段2 01 当前 Schema 基线迁移
+﻿# 闃舵2 01 褰撳墠 Schema 鍩虹嚎杩佺Щ
 
-## 目标
+## 鐩爣
 
-为当前模型结构建立一份明确的初始迁移。
+涓哄綋鍓嶆ā鍨嬬粨鏋勫缓绔嬩竴浠芥槑纭殑鍒濆杩佺Щ銆?
+## 寤鸿绛栫暐
 
-## 建议策略
-
-1. 以当前 `models` 为准生成基线
-2. 迁移内容至少覆盖当前主表与关键索引
-3. 对已由 `schema_compat` 兜底的列，也应纳入正式迁移
-
-## 特别关注
+1. 浠ュ綋鍓?`models` 涓哄噯鐢熸垚鍩虹嚎
+2. 杩佺Щ鍐呭鑷冲皯瑕嗙洊褰撳墠涓昏〃涓庡叧閿储寮?3. 瀵瑰凡鐢?`schema_compat` 鍏滃簳鐨勫垪锛屼篃搴旂撼鍏ユ寮忚縼绉?
+## 鐗瑰埆鍏虫敞
 
 1. `conversations.user_id`
 2. `research_directions.content`
 3. `project_designs.content`
-4. 现有 `project_document_chunks`
+4. 鐜版湁 `project_document_chunks`
 5. `generated_artifacts`
 
-## 风险
+## 椋庨櫓
 
-1. 自动生成迁移可能漏索引、默认值或 PostgreSQL 特性
-2. 基线迁移需要人工审查，不能盲信 autogenerate
+1. 鑷姩鐢熸垚杩佺Щ鍙兘婕忕储寮曘€侀粯璁ゅ€兼垨 PostgreSQL 鐗规€?2. 鍩虹嚎杩佺Щ闇€瑕佷汉宸ュ鏌ワ紝涓嶈兘鐩蹭俊 autogenerate
 
-## 验证点
+## 楠岃瘉鐐?
+1. 绌哄簱鎵ц upgrade 鑳藉缓鍑轰富琛?2. 鍏抽敭 JSONB / UUID / 绱㈠紩姝ｇ‘鐢熸垚
 
-1. 空库执行 upgrade 能建出主表
-2. 关键 JSONB / UUID / 索引正确生成

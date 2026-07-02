@@ -23,7 +23,22 @@ test("buildPaperExplanation separates hit reason, recommendation hints and verif
   assert.ok(explanation.recommendationHints.some((item) => item.includes("已核验标签")));
   assert.ok(explanation.recommendationHints.some((item) => item.includes("引用量 32")));
   assert.ok(explanation.verificationNotes.some((item) => item.includes("IEEE")));
-  assert.ok(explanation.verificationNotes.some((item) => item.includes("系统推断命中")));
+  assert.ok(explanation.verificationNotes.some((item) => item.includes("本地授权目录级核验")));
+});
+
+test("buildPaperExplanation keeps pending catalog tags explicit", () => {
+  const explanation = buildPaperExplanation({
+    title: "Pending authority paper",
+    authority_tags: [],
+    pending_authority_tags: ["jcr", "cas"],
+    authority_reasons: ["当前授权目录未命中 JCR/中科院分区，仅保留待核验提示"],
+    citation_count: 0,
+    quality_flags: [],
+  });
+
+  assert.ok(explanation.recommendationHints.some((item) => item.includes("待核验")));
+  assert.ok(explanation.verificationNotes.some((item) => item.includes("待核验")));
+  assert.ok(explanation.verificationNotes.some((item) => item.includes("核验")));
 });
 
 test("buildPaperExplanation falls back to abstract when why_selected is absent", () => {

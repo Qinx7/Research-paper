@@ -54,7 +54,6 @@ import type {
   ListPPTsResponse,
   HtmlDeckArtifact,
   PPTStyle,
-  ProposalOut,
   LiteratureAnalysisInput,
   Paper,
   PaperAnalysisResult,
@@ -73,11 +72,13 @@ import type {
   ReadinessCheck,
   Draft,
   DraftOutline,
+  WritingPlanResult,
+  WritingReviewResult,
+  WritingRevisionResult,
+  FullDraftReviewResult,
+  FullDraftRevisionResult,
   ChapterResult,
   AbstractResult,
-  DefensePPTResponse,
-  DefensePPTOutline,
-  DefenseScript,
   OutcomeTypeInfo,
   OutcomeKnowledgeStatus,
   AgentWorkflowRun,
@@ -341,9 +342,9 @@ export async function listProjectDesigns(projectId?: string) {
   return authGet<PersistedProjectDesign[]>(`${API_BASE_URL}/api/research/designs${qs ? `?${qs}` : ""}`);
 }
 
-/** 阶段6：生成开题 PPTX */
+/** 生成通用 PPTX */
 export function generatePPT(params: { design: ProjectDesign; template: string }) {
-  return post<GeneratePPTResponse>("/api/ppt/proposal", {
+  return post<GeneratePPTResponse>("/api/ppt/generate", {
     design: params.design,
     template: params.template,
   });
@@ -357,12 +358,6 @@ export async function listPPTs() {
     throw new Error(err.detail || `请求失败 (${res.status})`);
   }
   return res.json() as Promise<ListPPTsResponse>;
-}
-
-/** 获取当前用户的开题 PPT 文件列表 */
-export async function listProposalPPTFiles() {
-  const result = await listPPTs();
-  return result.files.filter((item) => item.filename.toLowerCase().includes("proposal"));
 }
 
 /** 将搜索结果保存到项目文献库 */
@@ -461,37 +456,9 @@ export async function removeProjectPaper(projectId: string, paperId: string) {
   }
 }
 
-/** 阶段7：生成开题报告 */
-export function generateProposal(params: { project_id: string; design_id: string }) {
-  return post<ProposalOut>("/api/proposal/generate", {
-    project_id: params.project_id,
-    design_id: params.design_id,
-  });
-}
-
-/** 获取单个开题报告详情 */
-export async function getProposal(proposalId: string) {
-  const res = await fetch(`${BASE_URL}/api/proposal/${proposalId}`, { headers: authHeaders() });
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error(err.detail || `请求失败 (${res.status})`);
-  }
-  return res.json() as Promise<ProposalOut>;
-}
-
-/** 获取项目下最新一份开题报告 */
-export async function getLatestProjectProposal(projectId: string) {
-  const res = await fetch(`${BASE_URL}/api/proposal/project/${projectId}/latest`, { headers: authHeaders() });
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error(err.detail || `请求失败 (${res.status})`);
-  }
-  return res.json() as Promise<ProposalOut | null>;
-}
-
 /** 获取可选 PPT 风格列表 */
 export async function listPPTStyles() {
-  const res = await fetch(`${BASE_URL}/api/defense/ppt/styles`, { headers: authHeaders() });
+  const res = await fetch(`${BASE_URL}/api/ppt/styles`, { headers: authHeaders() });
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
     throw new Error(err.detail || `请求失败 (${res.status})`);
@@ -643,6 +610,36 @@ export function generateOutline(draftId: string) {
   return post<DraftOutline>(`/api/drafts/${draftId}/outline`, {});
 }
 
+/** 生成论文写作计划 */
+export function generateWritingPlan(draftId: string) {
+  return post<WritingPlanResult>(`/api/drafts/${draftId}/plan`, {});
+}
+
+/** 生成整篇初稿 */
+export function generateFullDraft(draftId: string) {
+  return post<Draft>(`/api/drafts/${draftId}/full-generate`, {});
+}
+
+/** 审查当前章节 */
+export function reviewChapter(draftId: string, chapterKey: string) {
+  return post<WritingReviewResult>(`/api/drafts/${draftId}/chapters/${chapterKey}/review`, {});
+}
+
+/** 根据章节审查结果执行定向修订 */
+export function reviseChapter(draftId: string, chapterKey: string) {
+  return post<WritingRevisionResult>(`/api/drafts/${draftId}/chapters/${chapterKey}/revise`, {});
+}
+
+/** 审查整篇论文 */
+export function reviewFullDraft(draftId: string) {
+  return post<FullDraftReviewResult>(`/api/drafts/${draftId}/review-full`, {});
+}
+
+/** 根据整篇审查结果修订整篇论文 */
+export function reviseFullDraft(draftId: string) {
+  return post<FullDraftRevisionResult>(`/api/drafts/${draftId}/revise-full`, {});
+}
+
 /** 生成章节内容 */
 export function generateChapter(draftId: string, chapterKey: string) {
   return post<ChapterResult>(`/api/drafts/${draftId}/chapters/${chapterKey}`, {
@@ -741,66 +738,14 @@ export async function getKnowledgeGraph(projectId: string) {
   return res.json();
 }
 
-// ========== 已停用：答辩 PPT（后端能力保留，当前前端主链路不使用） ==========
-
-/** 获取答辩 PPT 风格列表 */
-export async function listDefensePPTStyles() {
-  const res = await fetch(`${BASE_URL}/api/defense/ppt/styles`, { headers: authHeaders() });
-  if (!res.ok) throw new Error("获取风格失败");
-  return res.json() as Promise<PPTStyle[]>;
-}
-
 /** 生成实验型 HTML deck */
 export function generateHtmlDeckArtifact(params: {
   deck_title?: string;
   slides_outline?: Record<string, unknown>[];
   theme?: string;
   draft_id?: string;
-  proposal_id?: string;
 }) {
   return post<HtmlDeckArtifact>("/api/ppt/html-deck", params);
-}
-
-/** 生成答辩 PPT */
-export function generateDefensePPT(params: { draft_id: string; template: string }) {
-  return post<DefensePPTResponse>("/api/defense/ppt", params);
-}
-
-/** 异步生成答辩 PPT */
-export async function generateDefensePPTAsync(params: { draft_id: string; template: string }) {
-  const res = await fetch(`${BASE_URL}/api/defense/ppt?async=true`, {
-    method: "POST",
-    headers: authHeaders(),
-    body: JSON.stringify(params),
-  });
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error(err.detail || `请求失败 (${res.status})`);
-  }
-  return res.json() as Promise<TaskLaunchResponse>;
-}
-
-/** 获取答辩 PPT 大纲 */
-export async function getDefenseOutline(draftId: string) {
-  const res = await fetch(`${BASE_URL}/api/defense/ppt/${draftId}/outline`, {
-    headers: authHeaders(),
-  });
-  if (!res.ok) throw new Error("获取大纲失败");
-  return res.json() as Promise<DefensePPTOutline>;
-}
-
-/** 获取答辩演讲稿 */
-export async function getDefenseScript(draftId: string) {
-  const res = await fetch(`${BASE_URL}/api/defense/ppt/${draftId}/script`, {
-    headers: authHeaders(),
-  });
-  if (!res.ok) throw new Error("获取演讲稿失败");
-  return res.json() as Promise<DefenseScript>;
-}
-
-/** 下载答辩 PPT URL */
-export function getDefensePPTDownloadUrl(filename: string) {
-  return `${BASE_URL}/api/defense/ppt/download/${filename}`;
 }
 
 // ========== 异步任务 ==========
@@ -813,23 +758,9 @@ export interface TaskStatus {
   error?: string;
 }
 
-/** 异步生成 PPT（立即返回 task_id） */
+/** 异步生成通用 PPT（立即返回 task_id） */
 export async function generatePPTAsync(params: { design: ProjectDesign; template: string }) {
-  const res = await fetch(`${BASE_URL}/api/ppt/proposal?async=true`, {
-    method: "POST",
-    headers: authHeaders(),
-    body: JSON.stringify(params),
-  });
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error(err.detail || `请求失败 (${res.status})`);
-  }
-  return res.json() as Promise<TaskLaunchResponse>;
-}
-
-/** 异步生成开题报告（立即返回 task_id） */
-export async function generateProposalAsync(params: { project_id: string; design_id: string }) {
-  const res = await fetch(`${BASE_URL}/api/proposal/generate?async=true`, {
+  const res = await fetch(`${BASE_URL}/api/ppt/generate?async=true`, {
     method: "POST",
     headers: authHeaders(),
     body: JSON.stringify(params),

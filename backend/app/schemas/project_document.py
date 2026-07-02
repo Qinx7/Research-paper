@@ -18,6 +18,12 @@ class OutcomeKnowledgeStatus(BaseModel):
     strategy_chain: list[str] = []
     used_ocr: bool = False
     error_stage: str | None = None
+    document_kind: str | None = None
+    structured_fields: list[str] = []
+    structured_confidence: dict = {}
+    vector_status: str = "not_started"
+    vector_count: int = 0
+    vector_message: str = "尚未生成语义检索向量"
 
     @field_validator("outcome_id", mode="before")
     @classmethod

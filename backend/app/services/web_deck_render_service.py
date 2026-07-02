@@ -6,7 +6,6 @@ import os
 from uuid import uuid4
 
 from ..schemas.draft import PAPER_CHAPTER_KEYS, PAPER_CHAPTER_LABELS
-from ..schemas.proposal import SECTION_KEYS, SECTION_LABELS
 
 
 class WebDeckRenderService:
@@ -406,26 +405,6 @@ def build_slides_outline_from_draft(*, title: str, draft_content: dict) -> list[
         })
 
     return slides
-
-
-def build_slides_outline_from_proposal(*, title: str, proposal_content: dict) -> list[dict]:
-    """从开题报告结构构建最小 HTML deck 大纲。"""
-    slides = [{"type": "cover", "title": title, "description": "开题汇报 HTML deck 预览"}]
-
-    for section_key in SECTION_KEYS:
-        record = proposal_content.get(section_key, {}) if isinstance(proposal_content, dict) else {}
-        section_title = str(record.get("title") or SECTION_LABELS.get(section_key, section_key))
-        content = str(record.get("content") or "").strip()
-        slides.append({
-            "type": "content",
-            "title": section_title,
-            "description": _summarize_text(content),
-            "items": _split_outline_items(content, max_items=5),
-        })
-
-    return slides
-
-
 def _summarize_text(content: str, max_len: int = 220) -> str:
     text = " ".join((content or "").split())
     if not text:

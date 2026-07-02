@@ -120,7 +120,15 @@ class PaperWritingWorkflowTests(unittest.TestCase):
         self.assertEqual(db.runs[0].output_snapshot["chapter_key"], "chapter_1_introduction")
         self.assertEqual(db.runs[0].output_snapshot["evidence_counts"]["papers"], 1)
         self.assertEqual(db.steps[2].output_summary.get("skill_id"), "paper.chapter_draft")
+        self.assertEqual(db.steps[2].output_summary.get("action"), "write_chapter")
+        self.assertEqual(db.steps[2].output_summary.get("resolved_skill_id"), "paper.chapter_draft")
         self.assertEqual(db.steps[3].output_summary.get("skill_id"), "paper.chapter_grounding")
+        self.assertEqual(db.steps[3].output_summary.get("action"), "validate_chapter")
+        self.assertEqual(db.steps[3].output_summary.get("resolved_skill_id"), "paper.chapter_grounding")
+        self.assertEqual(db.runs[0].output_snapshot.get("resolved_skills"), {
+            "write_chapter": "paper.chapter_draft",
+            "validate_chapter": "paper.chapter_grounding",
+        })
 
     def test_chapter_workflow_fails_before_save_when_grounding_rejects(self):
         from app.agents.workflows.paper_writing_workflow import run_generate_chapter_workflow
@@ -160,7 +168,7 @@ class PaperWritingWorkflowTests(unittest.TestCase):
         failed_steps = [step for step in db.steps if step.status == "failed"]
         self.assertEqual(failed_steps[0].node_name, "grounding_guard")
 
-    def test_non_intro_chapter_citations_are_stripped_before_save(self):
+    def test_non_intro_chapter_citations_are_preserved_before_save(self):
         from app.agents.workflows.paper_writing_workflow import run_generate_chapter_workflow
 
         draft = SimpleNamespace(
@@ -195,8 +203,8 @@ class PaperWritingWorkflowTests(unittest.TestCase):
             record_db=db,
         )
 
-        self.assertEqual(result["citations"], [])
-        self.assertEqual(draft.content["chapter_3_design"]["citations"], [])
+        self.assertEqual(result["citations"], ["真实论文A", "系统截图"])
+        self.assertEqual(draft.content["chapter_3_design"]["citations"], ["真实论文A", "系统截图"])
 
 
 if __name__ == "__main__":

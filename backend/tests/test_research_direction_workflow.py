@@ -119,6 +119,14 @@ class ResearchDirectionWorkflowTests(unittest.TestCase):
         self.assertEqual(len(db.steps), 3)
         self.assertEqual(db.runs[0].status, "success")
         self.assertEqual(db.runs[0].user_id, user_id)
+        self.assertEqual(db.steps[0].output_summary.get("action"), "generate_directions")
+        self.assertEqual(db.steps[0].output_summary.get("resolved_skill_id"), "research.direction_generate")
+        self.assertEqual(db.steps[1].output_summary.get("action"), "score_directions")
+        self.assertEqual(db.steps[1].output_summary.get("resolved_skill_id"), "research.direction_score")
+        self.assertEqual(db.runs[0].output_snapshot.get("resolved_skills"), {
+            "generate_directions": "research.direction_generate",
+            "score_directions": "research.direction_score",
+        })
 
     def test_direction_workflow_does_not_save_when_generation_returns_empty(self):
         from app.agents.workflows.research_direction_workflow import run_generate_research_directions_workflow

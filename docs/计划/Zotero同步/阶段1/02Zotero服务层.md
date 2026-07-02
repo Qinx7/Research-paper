@@ -1,25 +1,21 @@
-# 阶段1-02：Zotero 服务层
+﻿# 闃舵1-02锛歓otero 鏈嶅姟灞?
+## 2.1 鏂囦欢
 
-## 2.1 文件
+鏂板缓 `backend/app/services/zotero_service.py`
 
-新建 `backend/app/services/zotero_service.py`
+## 2.2 璁捐鎬濊矾
 
-## 2.2 设计思路
+鍦?`pyzotero` 鍩虹涓婂皝瑁呬笟鍔￠€昏緫锛屾彁渚涘悓姝ュ弸濂界殑鍑芥暟寮?API銆傛牳蹇冭亴璐ｏ細
 
-在 `pyzotero` 基础上封装业务逻辑，提供同步友好的函数式 API。核心职责：
+1. 杩炴帴楠岃瘉 鈥?娴嬭瘯 API Key 鏄惁鏈夋晥
+2. 闆嗗悎娴忚 鈥?鑾峰彇鐢ㄦ埛/缇ょ粍鐨勬墍鏈夐泦鍚?3. 鏉＄洰瀵煎叆 鈥?鎸夐泦鍚堟媺鍙栨潯鐩紝鏄犲皠涓?Paper 瀵硅薄
+4. 澧為噺鍚屾 鈥?鍩轰簬鐗堟湰鍙峰彧鎷夊彉鏇存潯鐩?
+## 2.3 鏍稿績鍑芥暟
 
-1. 连接验证 — 测试 API Key 是否有效
-2. 集合浏览 — 获取用户/群组的所有集合
-3. 条目导入 — 按集合拉取条目，映射为 Paper 对象
-4. 增量同步 — 基于版本号只拉变更条目
-
-## 2.3 核心函数
-
-### ZoteroClient 类
-
+### ZoteroClient 绫?
 ```python
 class ZoteroClient:
-    """封装 pyzotero 的业务客户端"""
+    """灏佽 pyzotero 鐨勪笟鍔″鎴风"""
 
     def __init__(self, library_type: str, library_id: str, api_key: str):
         self._zot = zotero.Zotero(library_id, library_type, api_key)
@@ -27,39 +23,36 @@ class ZoteroClient:
         self.library_id = library_id
 
     def verify_connection(self) -> dict:
-        """验证 API Key 权限，返回用户信息"""
+        """楠岃瘉 API Key 鏉冮檺锛岃繑鍥炵敤鎴蜂俊鎭?""
         # GET /keys/current
 
     def get_collections(self) -> list[dict]:
-        """获取所有集合（递归展开子集合）"""
+        """鑾峰彇鎵€鏈夐泦鍚堬紙閫掑綊灞曞紑瀛愰泦鍚堬級"""
 
     def get_collection_items(self, collection_key: str, since_version: int | None = None) -> list[dict]:
-        """获取集合内所有条目"""
+        """鑾峰彇闆嗗悎鍐呮墍鏈夋潯鐩?""
 
     def get_all_items(self, since_version: int | None = None) -> list[dict]:
-        """获取顶层所有条目"""
+        """鑾峰彇椤跺眰鎵€鏈夋潯鐩?""
 ```
 
-### 导入映射
+### 瀵煎叆鏄犲皠
 
 ```python
 def map_zotero_item_to_paper(item: dict, project_id: str) -> dict:
-    """将 Zotero 条目映射为 Paper 创建参数字典。
-
-    Zotero itemType → Paper 字段映射：
-    - title → title
-    - creators → authors（分号拼接）
-    - date → year（提取年份）
-    - publicationTitle / conferenceName → venue
-    - DOI → doi
-    - abstractNote → abstract
-    - url → url
-    - extra → 尝试提取引用数
-    - key → zotero_key
+    """灏?Zotero 鏉＄洰鏄犲皠涓?Paper 鍒涘缓鍙傛暟瀛楀吀銆?
+    Zotero itemType 鈫?Paper 瀛楁鏄犲皠锛?    - title 鈫?title
+    - creators 鈫?authors锛堝垎鍙锋嫾鎺ワ級
+    - date 鈫?year锛堟彁鍙栧勾浠斤級
+    - publicationTitle / conferenceName 鈫?venue
+    - DOI 鈫?doi
+    - abstractNote 鈫?abstract
+    - url 鈫?url
+    - extra 鈫?灏濊瘯鎻愬彇寮曠敤鏁?    - key 鈫?zotero_key
     """
 ```
 
-### 同步编排
+### 鍚屾缂栨帓
 
 ```python
 def import_from_zotero(
@@ -68,26 +61,26 @@ def import_from_zotero(
     project_id: str,
     db_session,
 ) -> dict:
-    """主导入流程：
-    1. 创建 ZoteroClient
-    2. 按集合拉取条目
-    3. 按 zotero_key 去重（已有则更新，无则新建）
-    4. 批量写入 DB
-    5. 更新 ZoteroSync 记录
-    返回 {imported: N, updated: N, total: N}
+    """涓诲鍏ユ祦绋嬶細
+    1. 鍒涘缓 ZoteroClient
+    2. 鎸夐泦鍚堟媺鍙栨潯鐩?    3. 鎸?zotero_key 鍘婚噸锛堝凡鏈夊垯鏇存柊锛屾棤鍒欐柊寤猴級
+    4. 鎵归噺鍐欏叆 DB
+    5. 鏇存柊 ZoteroSync 璁板綍
+    杩斿洖 {imported: N, updated: N, total: N}
     """
 ```
 
-## 2.4 错误处理
+## 2.4 閿欒澶勭悊
 
-- Zotero API 403 → API Key 无效或无权限
-- Zotero API 429 → 等待 Retry-After 秒后重试（最多 3 次）
-- 网络错误 → 抛出明确错误信息
-- 条目映射失败 → 跳过该条目，继续处理
+- Zotero API 403 鈫?API Key 鏃犳晥鎴栨棤鏉冮檺
+- Zotero API 429 鈫?绛夊緟 Retry-After 绉掑悗閲嶈瘯锛堟渶澶?3 娆★級
+- 缃戠粶閿欒 鈫?鎶涘嚭鏄庣‘閿欒淇℃伅
+- 鏉＄洰鏄犲皠澶辫触 鈫?璺宠繃璇ユ潯鐩紝缁х画澶勭悊
 
-## 2.5 验证
+## 2.5 楠岃瘉
 
 ```python
 from backend.app.services.zotero_service import ZoteroClient, map_zotero_item_to_paper
-# 可以实例化并调用方法
+# 鍙互瀹炰緥鍖栧苟璋冪敤鏂规硶
 ```
+

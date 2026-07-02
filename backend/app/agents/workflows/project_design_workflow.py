@@ -6,29 +6,54 @@ from sqlalchemy.orm import Session
 
 from ...models.project_design import ProjectDesign
 from ...services.agent_workflow_record_service import AgentWorkflowDbRecorder
+from ...skills import (
+    SkillExecutor,
+    SkillRouter,
+    build_default_skill_registry,
+)
 from ..orchestration import AgentNode, AgentNodeResult, AgentWorkflowRunner, AgentWorkflowState
 from ..project_design_agent import project_design_agent as default_project_design_agent
+from .skill_node_mixin import SkillNodeMixin
 
 
-class ProjectDesignGenerateNode(AgentNode):
+class ProjectDesignGenerateNode(SkillNodeMixin, AgentNode):
     """调用现有项目设计 Agent 生成设计方案。"""
 
     name = "project_design_generate"
 
-    def __init__(self, project_design_agent=None):
+    def __init__(self, skill_executor: SkillExecutor, skill_router: SkillRouter, project_design_agent=None):
+        self.skill_executor = skill_executor
+        self.skill_router = skill_router
         self.project_design_agent = project_design_agent or default_project_design_agent
 
     def run(self, state: AgentWorkflowState) -> AgentNodeResult:
-        design = self.project_design_agent.generate_design(
-            direction=state.input.get("direction") or {},
-            literature_analysis=state.input.get("literature_analysis") or {},
-            requirement=state.input.get("requirement") or "",
+        domain = "research"
+        action = "generate_design"
+        outcome = self.run_skill_action(
+            state,
+            skill_executor=self.skill_executor,
+            skill_router=self.skill_router,
+            domain=domain,
+            action=action,
+            payload=
+            {
+                "direction": state.input.get("direction") or {},
+                "literature_analysis": state.input.get("literature_analysis") or {},
+                "requirement": state.input.get("requirement") or "",
+            },
+            context_state={"project_design_agent": self.project_design_agent},
         )
+        if not outcome.ok:
+            return outcome.failed_result
+        design = outcome.output.get("design", {})
         if not design:
             return AgentNodeResult.failed("未生成可用项目设计方案")
         return AgentNodeResult.success(
             data_delta={"design": design, "design_topic": design.get("topic")},
-            metadata={"design_topic": design.get("topic")},
+            metadata={
+                **outcome.metadata,
+                "design_topic": design.get("topic"),
+            },
         )
 
 
@@ -68,6 +93,8 @@ def run_generate_project_design_workflow(
     user_id: str | None = None,
     project_design_agent=None,
     record_db=None,
+    skill_executor: SkillExecutor | None = None,
+    skill_router: SkillRouter | None = None,
 ) -> dict[str, Any]:
     """运行项目设计生成 workflow，并返回原项目设计接口兼容的数据。"""
     state = AgentWorkflowState(
@@ -82,9 +109,17 @@ def run_generate_project_design_workflow(
         },
     )
     recorder = AgentWorkflowDbRecorder(record_db) if record_db is not None else None
+    if skill_executor is None or skill_router is None:
+        skill_registry = build_default_skill_registry()
+        skill_executor = skill_executor or SkillExecutor(skill_registry)
+        skill_router = skill_router or SkillRouter(skill_registry)
     runner = AgentWorkflowRunner(
         [
-            ProjectDesignGenerateNode(project_design_agent=project_design_agent),
+            ProjectDesignGenerateNode(
+                skill_executor=skill_executor,
+                skill_router=skill_router,
+                project_design_agent=project_design_agent,
+            ),
             ProjectDesignSaveNode(db=db),
         ],
         recorder=recorder,

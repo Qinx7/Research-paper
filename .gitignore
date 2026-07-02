@@ -46,17 +46,21 @@ test_output.pdf
 # 用户上传、生成物和临时文件
 storage/uploads/*
 storage/generated/*
+storage/ppt/*
 storage/temp/*
 !storage/uploads/.gitkeep
 !storage/generated/.gitkeep
+!storage/ppt/.gitkeep
 !storage/temp/.gitkeep
 backend/storage/uploads/*
 backend/storage/generated/*
 backend/storage/drafts/*
+backend/storage/ppt/*
 backend/storage/temp/*
 !backend/storage/uploads/.gitkeep
 !backend/storage/generated/.gitkeep
 !backend/storage/drafts/.gitkeep
+!backend/storage/ppt/.gitkeep
 !backend/storage/temp/.gitkeep
 
 # 系统文件

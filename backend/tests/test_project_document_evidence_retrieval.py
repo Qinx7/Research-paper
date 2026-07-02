@@ -77,6 +77,41 @@ class ProjectDocumentEvidenceRetrievalTests(unittest.TestCase):
         self.assertIn("资料正文命中", items[0]["score_reasons"])
         self.assertEqual(items[0]["action_label"], "下载来源文件")
 
+    def test_project_document_chunk_semantic_hits_are_preserved(self):
+        from app.services.evidence_retrieval_service import merge_project_document_evidence_items
+
+        keyword_items = [
+            {
+                "kind": "project_document_chunk",
+                "title": "访谈记录.docx",
+                "score": 5,
+                "score_reasons": ["资料正文命中"],
+                "source_title": "访谈记录.docx",
+            }
+        ]
+        semantic_items = [
+            {
+                "kind": "project_document_chunk",
+                "title": "访谈记录.docx",
+                "score": 0.88,
+                "score_reasons": ["语义相似 0.88"],
+                "source_title": "访谈记录.docx",
+            },
+            {
+                "kind": "project_document_chunk",
+                "title": "系统设计说明.md",
+                "score": 0.76,
+                "score_reasons": ["语义相似 0.76"],
+                "source_title": "系统设计说明.md",
+            },
+        ]
+
+        merged = merge_project_document_evidence_items(keyword_items, semantic_items, limit=4)
+
+        self.assertEqual(len(merged), 2)
+        self.assertIn("语义相似 0.88", merged[0]["score_reasons"])
+        self.assertEqual(merged[1]["source_title"], "系统设计说明.md")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -32,6 +32,7 @@ class Settings(BaseSettings):
     SEMANTIC_SCHOLAR_API_KEY: str = ""
     CROSSREF_MAILTO: str = ""
     PUBSCHOLAR_USER_ID: str = ""
+    AUTHORITY_CATALOG_PATH: str = ""
 
     # CNKI 搜索配置
     CNKI_HEADLESS: bool = False

@@ -3,7 +3,6 @@ import unittest
 from app.services.web_deck_render_service import (
     WebDeckRenderService,
     build_slides_outline_from_draft,
-    build_slides_outline_from_proposal,
 )
 
 
@@ -12,9 +11,9 @@ class WebDeckRenderServiceTests(unittest.TestCase):
         service = WebDeckRenderService()
 
         html = service.render_to_html(
-            deck_title="答辩预演版",
+            deck_title="汇报预演稿",
             slides_outline=[
-                {"type": "cover", "title": "答辩预演版", "description": "封面说明"},
+                {"type": "cover", "title": "汇报预演稿", "description": "封面说明"},
                 {"title": "研究背景", "items": ["背景 1", "背景 2"]},
                 {"title": "实验设计", "description": "说明实验设计方案。"},
                 {"type": "cards", "title": "创新点", "items": ["创新点 1", "创新点 2"]},
@@ -22,7 +21,7 @@ class WebDeckRenderServiceTests(unittest.TestCase):
             theme="swiss",
         )
 
-        self.assertIn("答辩预演版", html)
+        self.assertIn("汇报预演稿", html)
         self.assertIn("研究背景", html)
         self.assertIn("背景 1", html)
         self.assertIn("实验设计", html)
@@ -46,20 +45,6 @@ class WebDeckRenderServiceTests(unittest.TestCase):
         self.assertEqual(slides[1]["title"], "第一章 绪论")
         self.assertIn("研究背景", slides[1]["items"])
         self.assertEqual(slides[3]["title"], "第三章 系统设计")
-
-    def test_build_slides_outline_from_proposal_uses_section_labels(self):
-        slides = build_slides_outline_from_proposal(
-            title="开题报告",
-            proposal_content={
-                "background_significance": {"title": "选题背景与研究意义", "content": "研究背景\n研究意义"},
-                "technical_route": {"title": "技术路线", "content": "步骤一\n步骤二"},
-            },
-        )
-
-        self.assertEqual(slides[0]["title"], "开题报告")
-        self.assertEqual(slides[1]["title"], "选题背景与研究意义")
-        self.assertIn("研究背景", slides[1]["items"])
-        self.assertEqual(slides[7]["title"], "技术路线")
 
 
 if __name__ == "__main__":

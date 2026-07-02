@@ -56,7 +56,7 @@ export function buildPaperExplanation(paper = {}) {
   }
   if (pending.length) {
     recommendationHints.push(`待核验标签：${pending.map(authorityLabel).join("、")}。`);
-    verificationNotes.push(`以下属于系统推断命中，仍需继续核验，不等于官方目录已认证：${pending.map(authorityLabel).join("、")}。`);
+    verificationNotes.push(`以下标签仅表示系统检测到相关信号，尚未完成本地授权目录级核验：${pending.map(authorityLabel).join("、")}。`);
   }
   if ((paper.citation_count ?? 0) > 0) {
     recommendationHints.push(`引用量 ${paper.citation_count}，可作为影响力参考。`);

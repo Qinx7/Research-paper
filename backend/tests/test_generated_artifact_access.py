@@ -52,12 +52,12 @@ class GeneratedArtifactAccessTests(unittest.TestCase):
             db=self.db,
             user_id=self.db.user_id,
             task_id="task-1",
-            artifact_type="proposal_ppt",
+            artifact_type="project_ppt",
         )
 
         self.assertEqual(record.user_id, self.db.user_id)
         self.assertEqual(record.task_id, "task-1")
-        self.assertEqual(record.artifact_type, "proposal_ppt")
+        self.assertEqual(record.artifact_type, "project_ppt")
         self.assertEqual(self.db.commits, 1)
 
     def test_user_can_access_own_object_key_but_not_other_users_key(self):
@@ -70,7 +70,7 @@ class GeneratedArtifactAccessTests(unittest.TestCase):
             db=self.db,
             user_id=self.db.user_id,
             object_key="generated/own.pptx",
-            artifact_type="defense_ppt",
+            artifact_type="project_ppt",
         )
 
         self.assertTrue(can_access_object_key(self.db, self.db.user_id, "generated/own.pptx"))
@@ -83,7 +83,7 @@ class GeneratedArtifactAccessTests(unittest.TestCase):
             db=self.db,
             user_id=self.db.user_id,
             task_id="task-2",
-            artifact_type="defense_ppt",
+            artifact_type="project_ppt",
         )
 
         self.assertTrue(can_access_task(self.db, self.db.user_id, "task-2"))

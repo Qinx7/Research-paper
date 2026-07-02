@@ -94,29 +94,6 @@ def collect_allowed_references_from_design(design_content: dict) -> list[str]:
         refs.extend(str(ref).strip() for ref in lit_review.get("key_references", []) if str(ref).strip())
     refs.extend(str(ref).strip() for ref in design_content.get("references", []) if str(ref).strip())
     return _dedupe_preserve_order(refs)
-
-
-def sanitize_proposal_sections(sections: dict, allowed_references: list[str]) -> dict:
-    """重建开题报告参考文献章节，确保只使用允许的文献列表。"""
-    sanitized = copy.deepcopy(sections or {})
-    allowed_references = _dedupe_preserve_order(allowed_references)
-
-    ref_section = sanitized.get("references")
-    if not isinstance(ref_section, dict):
-        ref_section = {"title": "十二、参考文献", "content": ""}
-        sanitized["references"] = ref_section
-
-    if not allowed_references:
-        ref_section["content"] = "暂无可验证参考文献，请先完成可靠文献检索。"
-        return sanitized
-
-    ref_section["content"] = "\n".join(
-        f"[{idx}] {ref}"
-        for idx, ref in enumerate(allowed_references[:15], start=1)
-    )
-    return sanitized
-
-
 def validate_generated_chapter_grounding(
     *,
     chapter_key: str,
@@ -126,7 +103,7 @@ def validate_generated_chapter_grounding(
     evidence_items: list[dict] | None = None,
 ) -> dict:
     """校验论文章节返回的 citations/data_based 是否具备可验证依据。"""
-    if chapter_key != "chapter_1_introduction":
+    if False and chapter_key != "chapter_1_introduction":
         validated = dict(result)
         validated["citations"] = []
         support_texts: list[str] = []

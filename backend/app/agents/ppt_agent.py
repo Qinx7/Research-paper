@@ -1,4 +1,4 @@
-"""开题 PPT 生成 Agent —— 支持多风格主题与用户自选样式。"""
+"""通用 PPT 生成 Agent —— 支持多风格主题与用户自选样式。"""
 import io
 import os
 
@@ -29,7 +29,7 @@ STYLE_PRESETS = {
     "academic_blue": {
         "id": "academic_blue",
         "name": "学术蓝",
-        "description": "稳重正式，适合通用开题答辩与研究汇报。",
+        "description": "稳重正式，适合通用研究汇报与阶段展示。",
         "scene": "默认推荐",
         "is_default": True,
         "fonts": {
@@ -244,7 +244,7 @@ def _add_cover_slide(prs, *, style: dict, topic: str, num: int, total: int):
         p.alignment = PP_ALIGN.CENTER
 
     p2 = tf.add_paragraph()
-    p2.text = "研究生开题答辩"
+    p2.text = "研究汇报演示"
     if mode == "minimal_center":
         p2.alignment = PP_ALIGN.CENTER
     run2 = p2.runs[0] if p2.runs else p2.add_run()
@@ -253,7 +253,7 @@ def _add_cover_slide(prs, *, style: dict, topic: str, num: int, total: int):
     tb2 = slide.shapes.add_textbox(Inches(1.0), Inches(5.85), Inches(10.8), Inches(0.5))
     tf2 = tb2.text_frame
     p3 = tf2.paragraphs[0]
-    p3.text = "文献驱动型研究生科研 Agent  ·  开题报告"
+    p3.text = "文献驱动型研究生科研 Agent  ·  通用研究汇报"
     if mode == "minimal_center":
         p3.alignment = PP_ALIGN.CENTER
     run3 = p3.runs[0] if p3.runs else p3.add_run()
@@ -600,8 +600,8 @@ def _add_ending_slide(prs, *, style: dict, num: int, total: int):
     _add_page_number(slide, style=style, num=num, total=total)
 
 
-class ProposalPPTAgent:
-    """开题 PPT 生成 Agent —— 多风格主题。"""
+class ProjectPPTAgent:
+    """通用 PPT 生成 Agent —— 多风格主题。"""
 
     def __init__(self, output_dir: str = "storage/generated"):
         self.output_dir = output_dir
@@ -646,7 +646,7 @@ class ProposalPPTAgent:
         prs.save(buf)
         pptx_bytes = buf.getvalue()
 
-        filename = f"proposal_{style['id']}_{os.urandom(4).hex()}.pptx"
+        filename = f"project_{style['id']}_{os.urandom(4).hex()}.pptx"
         object_key = f"ppt/{filename}"
         save_bytes(pptx_bytes, object_key,
                    content_type="application/vnd.openxmlformats-officedocument.presentationml.presentation")
@@ -760,4 +760,4 @@ class ProposalPPTAgent:
         return items if items else ["待补充"]
 
 
-ppt_agent = ProposalPPTAgent(output_dir="storage/generated")
+ppt_agent = ProjectPPTAgent(output_dir="storage/generated")

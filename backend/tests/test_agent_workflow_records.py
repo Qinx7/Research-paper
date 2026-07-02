@@ -1,3 +1,4 @@
+"""多 Agent workflow 执行记录测试。"""
 import unittest
 import uuid
 from types import SimpleNamespace
@@ -183,6 +184,147 @@ class AgentWorkflowRecordTests(unittest.TestCase):
         self.assertEqual(snapshot["directions_count"], 2)
         self.assertEqual(snapshot["direction_titles"], ["方向A", "方向B"])
         self.assertEqual(snapshot["saved_ids"], ["id-a", "id-b"])
+
+    def test_recorder_includes_workflow_metadata_and_resolved_skills(self):
+        from app.agents.orchestration import AgentNode, AgentNodeResult, AgentWorkflowRunner, AgentWorkflowState
+        from app.services.agent_workflow_record_service import AgentWorkflowDbRecorder
+
+        class SkillNode(AgentNode):
+            name = "skill_node"
+
+            def run(self, state):
+                state.metadata["resolved_skills"] = {"preview_html_deck": "ppt.web_html_deck"}
+                return AgentNodeResult.success(metadata={
+                    "domain": "ppt",
+                    "action": "preview_html_deck",
+                    "resolved_skill_id": "ppt.web_html_deck",
+                })
+
+        db = FakeDb()
+        AgentWorkflowRunner(
+            [SkillNode()],
+            recorder=AgentWorkflowDbRecorder(db),
+        ).run(AgentWorkflowState(workflow_name="html_deck_preview"))
+
+        self.assertEqual(db.runs[0].output_snapshot["resolved_skills"], {"preview_html_deck": "ppt.web_html_deck"})
+        self.assertEqual(db.steps[0].output_summary["resolved_skill_id"], "ppt.web_html_deck")
+
+    def test_recorder_stores_run_diagnostics_and_result_ref(self):
+        from app.agents.orchestration import AgentNode, AgentNodeResult, AgentWorkflowRunner, AgentWorkflowState
+        from app.services.agent_workflow_record_service import AgentWorkflowDbRecorder
+
+        class ArtifactNode(AgentNode):
+            name = "deck_render"
+            node_type = "render"
+            label = "生成 HTML Deck"
+
+            def run(self, state):
+                state.metadata["workflow_version"] = "2026.07"
+                state.metadata["trigger_source"] = "ppt_page"
+                state.metadata["visibility"] = "internal"
+                return AgentNodeResult.success(
+                    data_delta={"artifact_id": "artifact-1", "object_key": "generated/decks/demo.html"},
+                    artifacts=[{"kind": "html_deck", "artifact_id": "artifact-1"}],
+                    warnings=["Deck 使用默认主题"],
+                )
+
+        db = FakeDb()
+        state = AgentWorkflowState(
+            workflow_name="html_deck_preview",
+            input={"deck_title": "测试 Deck", "slides_outline": [{"title": "第一页"}]},
+        )
+        AgentWorkflowRunner([ArtifactNode()], recorder=AgentWorkflowDbRecorder(db)).run(state)
+
+        run = db.runs[0]
+        self.assertEqual(run.workflow_version, "2026.07")
+        self.assertEqual(run.trigger_source, "ppt_page")
+        self.assertEqual(run.visibility, "internal")
+        self.assertTrue(run.input_hash)
+        self.assertEqual(run.result_ref["artifact_id"], "artifact-1")
+        self.assertEqual(run.result_ref["object_key"], "generated/decks/demo.html")
+        self.assertEqual(run.diagnostics["warnings"], ["Deck 使用默认主题"])
+        self.assertEqual(run.diagnostics["artifacts"], [{"kind": "html_deck", "artifact_id": "artifact-1"}])
+        self.assertEqual(run.diagnostics["node_count"], 1)
+
+    def test_recorder_stores_step_contract_and_skill_diagnostics(self):
+        from app.agents.orchestration import AgentNode, AgentNodeResult, AgentWorkflowRunner, AgentWorkflowState
+        from app.services.agent_workflow_record_service import AgentWorkflowDbRecorder
+
+        class SkillNode(AgentNode):
+            name = "chapter_writer"
+            node_type = "generate"
+            label = "生成章节草稿"
+            visible = True
+
+            def run(self, state):
+                return AgentNodeResult.success(
+                    metadata={
+                        "domain": "paper",
+                        "action": "write_chapter",
+                        "skill_id": "paper.chapter_draft",
+                        "skill_version": "1",
+                    },
+                    warnings=["第一章需要补充中文文献"],
+                    artifacts=[{"kind": "draft_chapter", "chapter_key": "chapter_1_introduction"}],
+                )
+
+        db = FakeDb()
+        AgentWorkflowRunner(
+            [SkillNode()],
+            recorder=AgentWorkflowDbRecorder(db),
+        ).run(AgentWorkflowState(workflow_name="paper_chapter_generation"))
+
+        step = db.steps[0]
+        self.assertEqual(step.node_type, "generate")
+        self.assertEqual(step.node_label, "生成章节草稿")
+        self.assertTrue(step.critical)
+        self.assertTrue(step.visible)
+        self.assertEqual(step.skill_id, "paper.chapter_draft")
+        self.assertEqual(step.skill_version, "1")
+        self.assertEqual(step.warnings, ["第一章需要补充中文文献"])
+        self.assertEqual(step.artifacts, [{"kind": "draft_chapter", "chapter_key": "chapter_1_introduction"}])
+
+    def test_result_ref_uses_main_workflow_recovery_keys(self):
+        from app.agents.orchestration import AgentNode, AgentNodeResult, AgentWorkflowRunner, AgentWorkflowState
+        from app.services.agent_workflow_record_service import AgentWorkflowDbRecorder
+
+        class SearchNode(AgentNode):
+            name = "external_literature_search"
+
+            def run(self, state):
+                return AgentNodeResult.success(data_delta={
+                    "search_result": {
+                        "query": "multi agent",
+                        "papers": [{"title": "A"}, {"title": "B"}],
+                        "total_found": 2,
+                    }
+                })
+
+        db = FakeDb()
+        AgentWorkflowRunner(
+            [SearchNode()],
+            recorder=AgentWorkflowDbRecorder(db),
+        ).run(AgentWorkflowState(
+            workflow_name="home_literature_search",
+            search_task_id=str(uuid.uuid4()),
+        ))
+
+        self.assertEqual(db.runs[0].result_ref["query"], "multi agent")
+        self.assertEqual(db.runs[0].result_ref["paper_count"], 2)
+
+        class DesignNode(AgentNode):
+            name = "project_design_save"
+
+            def run(self, state):
+                return AgentNodeResult.success(data_delta={"saved_id": "design-1"})
+
+        db = FakeDb()
+        AgentWorkflowRunner(
+            [DesignNode()],
+            recorder=AgentWorkflowDbRecorder(db),
+        ).run(AgentWorkflowState(workflow_name="project_design_generation"))
+
+        self.assertEqual(db.runs[0].result_ref["design_id"], "design-1")
 
 
 if __name__ == "__main__":

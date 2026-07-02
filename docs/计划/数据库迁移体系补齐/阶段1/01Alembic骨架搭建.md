@@ -1,24 +1,24 @@
-# 阶段1 01 Alembic 骨架搭建
+﻿# 闃舵1 01 Alembic 楠ㄦ灦鎼缓
 
-## 目标
+## 鐩爣
 
-给 `backend` 建立 Alembic 迁移骨架。
-
-## 建议新增内容
+缁?`backend` 寤虹珛 Alembic 杩佺Щ楠ㄦ灦銆?
+## 寤鸿鏂板鍐呭
 
 1. `backend/alembic.ini`
 2. `backend/alembic/env.py`
 3. `backend/alembic/script.py.mako`
 4. `backend/alembic/versions/`
 
-## 关键要求
+## 鍏抽敭瑕佹眰
 
-1. Alembic 能读取当前 `SQLAlchemy Base.metadata`
-2. 数据库连接读取现有配置，而不是另起一套配置源
-3. 迁移目录结构遵循标准约定，避免后续自定义负担
+1. Alembic 鑳借鍙栧綋鍓?`SQLAlchemy Base.metadata`
+2. 鏁版嵁搴撹繛鎺ヨ鍙栫幇鏈夐厤缃紝鑰屼笉鏄彟璧蜂竴濂楅厤缃簮
+3. 杩佺Щ鐩綍缁撴瀯閬靛惊鏍囧噯绾﹀畾锛岄伩鍏嶅悗缁嚜瀹氫箟璐熸媴
 
-## 风险控制
+## 椋庨櫓鎺у埗
 
-1. 不直接改业务模型
-2. 先保证迁移框架可运行
-3. 暂不改启动建表逻辑
+1. 涓嶇洿鎺ユ敼涓氬姟妯″瀷
+2. 鍏堜繚璇佽縼绉绘鏋跺彲杩愯
+3. 鏆備笉鏀瑰惎鍔ㄥ缓琛ㄩ€昏緫
+

@@ -1,18 +1,16 @@
-# 阶段 2 · 论文草稿 PDF 导出
+﻿# 闃舵 2 路 璁烘枃鑽夌 PDF 瀵煎嚭
 
-## 目标
+## 鐩爣
 
-在 `drafts.py` 中增加 `_build_pdf()` 函数，让 `/api/drafts/{id}/download` 支持 `?format=pdf`。
+鍦?`drafts.py` 涓鍔?`_build_pdf()` 鍑芥暟锛岃 `/api/drafts/{id}/download` 鏀寔 `?format=pdf`銆?
+## 姝ラ
 
-## 步骤
+### 2.1 鏂板 `_build_pdf(draft) -> bytes`
 
-### 2.1 新增 `_build_pdf(draft) -> bytes`
-
-在 `drafts.py` 中（与 `_build_docx` 同位置）新增：
-
+鍦?`drafts.py` 涓紙涓?`_build_docx` 鍚屼綅缃級鏂板锛?
 ```python
 def _build_pdf(draft: Draft) -> bytes:
-    """将论文草稿渲染为 PDF 字节"""
+    """灏嗚鏂囪崏绋挎覆鏌撲负 PDF 瀛楄妭"""
     from ..services.pdf_builder import PdfBuilder
 
     pdf = PdfBuilder(draft.title)
@@ -35,10 +33,9 @@ def _build_pdf(draft: Draft) -> bytes:
     return pdf.output()
 ```
 
-### 2.2 改造 `download_draft` 端点
+### 2.2 鏀归€?`download_draft` 绔偣
 
-在现有 `GET /{draft_id}/download` 函数中增加 `format` 查询参数：
-
+鍦ㄧ幇鏈?`GET /{draft_id}/download` 鍑芥暟涓鍔?`format` 鏌ヨ鍙傛暟锛?
 ```python
 @router.get("/{draft_id}/download")
 def download_draft(
@@ -49,26 +46,24 @@ def download_draft(
     ...
     if format == "pdf":
         content_type = "application/pdf"
-        filename = ...  # .pdf 后缀
+        filename = ...  # .pdf 鍚庣紑
         object_key = f"drafts/draft_{draft_id}.pdf"
         buf = io.BytesIO(_build_pdf(draft))
     else:
-        # 原有 docx 逻辑不变
+        # 鍘熸湁 docx 閫昏緫涓嶅彉
 ```
 
-要点：
-- 默认 `docx` 保持向后兼容
-- PDF 也走 MinIO 优先 → 本地 fallback 路径
-- PDF 缓存 key 与 DOCX 分开（不同 object_key）
-
-### 2.3 验证
+瑕佺偣锛?- 榛樿 `docx` 淇濇寔鍚戝悗鍏煎
+- PDF 涔熻蛋 MinIO 浼樺厛 鈫?鏈湴 fallback 璺緞
+- PDF 缂撳瓨 key 涓?DOCX 鍒嗗紑锛堜笉鍚?object_key锛?
+### 2.3 楠岃瘉
 
 ```bash
-# 生成 PDF
+# 鐢熸垚 PDF
 curl -o draft.pdf "http://localhost:8000/api/drafts/{draft_id}/download?format=pdf"
-# 打开 draft.pdf 检查：封面标题 → 各章节标题 → 正文 → 无乱码
-
-# 默认仍返回 DOCX
+# 鎵撳紑 draft.pdf 妫€鏌ワ細灏侀潰鏍囬 鈫?鍚勭珷鑺傛爣棰?鈫?姝ｆ枃 鈫?鏃犱贡鐮?
+# 榛樿浠嶈繑鍥?DOCX
 curl -o draft.docx "http://localhost:8000/api/drafts/{draft_id}/download"
-# 确认 docx 行为未受影响
+# 纭 docx 琛屼负鏈彈褰卞搷
 ```
+

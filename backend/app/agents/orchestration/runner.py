@@ -72,14 +72,16 @@ class AgentWorkflowRunner:
                 status=result.status,
                 node_name=node.name,
                 message=result.error or "",
-                payload=result.metadata,
+                payload=self._node_event_payload(result),
             ))
             if result.status == "failed" and node.critical:
                 state.status = "failed"
                 self._notify_recorder("workflow_finished", state)
                 return AgentWorkflowResult(state=state, events=events)
+            if result.status == "failed" and not node.critical and state.status == "running":
+                state.status = "partial_success"
 
-        if state.status != "failed":
+        if state.status in {"pending", "running"}:
             state.status = "success"
         self._notify_recorder("workflow_finished", state)
         return AgentWorkflowResult(state=state, events=events)
@@ -89,10 +91,23 @@ class AgentWorkflowRunner:
         state.data.update(result.data_delta)
         state.evidence.extend(result.evidence_delta)
         state.messages.extend(result.messages)
+        if result.warnings:
+            state.metadata.setdefault("warnings", []).extend(result.warnings)
+        if result.artifacts:
+            state.metadata.setdefault("artifacts", []).extend(result.artifacts)
         if result.metadata:
             state.metadata.setdefault("nodes", {})[node.name] = result.metadata
         if result.status == "failed":
             state.errors.append(f"{node.name}: {result.error or '节点执行失败'}")
+
+    def _node_event_payload(self, result: AgentNodeResult) -> dict:
+        """把节点诊断字段稳定放入事件 payload。"""
+        payload = dict(result.metadata or {})
+        if result.warnings:
+            payload["warnings"] = result.warnings
+        if result.artifacts:
+            payload["artifacts"] = result.artifacts
+        return payload
 
     def _event(
         self,

@@ -13,7 +13,6 @@ from ..core.database import get_db
 from ..models.conversation import Conversation, Message
 from ..models.project import Project
 from ..models.project_design import ProjectDesign
-from ..models.proposal import Proposal
 from ..models.draft import Draft
 from ..models.outcome import Outcome
 from ..models.user import User
@@ -116,21 +115,6 @@ def _build_project_private_context(db: Session, project_id: str, query: str) -> 
             json.dumps(latest_design.content or {}, ensure_ascii=False),
             action_url=f"/projects/{project.id}",
             action_label="打开项目",
-        )
-
-    latest_proposal = (
-        db.query(Proposal)
-        .filter(Proposal.project_id == project.id)
-        .order_by(Proposal.created_at.desc())
-        .first()
-    )
-    if latest_proposal:
-        add_candidate(
-            "开题报告",
-            latest_proposal.title,
-            json.dumps(latest_proposal.content or {}, ensure_ascii=False),
-            action_url=f"/api/proposal/{latest_proposal.id}/download",
-            action_label="下载报告",
         )
 
     latest_draft = (

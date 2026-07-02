@@ -11,9 +11,10 @@ from ...models.paper import Paper
 from ...schemas.draft import PAPER_CHAPTER_LABELS
 from ...services.agent_workflow_record_service import AgentWorkflowDbRecorder
 from ...services.evidence_retrieval_service import build_evidence_context, retrieve_project_evidence
-from ...skills import SkillExecutionContext, SkillExecutor, SkillRouter, build_default_skill_registry
+from ...skills import SkillExecutor, SkillRouter, build_default_skill_registry
 from ..orchestration import AgentNode, AgentNodeResult, AgentWorkflowRunner, AgentWorkflowState
 from ..paper_writing_agent import paper_writing_agent
+from .skill_node_mixin import SkillNodeMixin
 
 
 class DraftContextNode(AgentNode):
@@ -87,7 +88,7 @@ class EvidenceCollectNode(AgentNode):
         )
 
 
-class ChapterWriterNode(AgentNode):
+class ChapterWriterNode(SkillNodeMixin, AgentNode):
     """调用现有论文写作 Agent 生成章节草稿。"""
 
     name = "chapter_writer"
@@ -98,9 +99,15 @@ class ChapterWriterNode(AgentNode):
         self.writing_agent = writing_agent or paper_writing_agent
 
     def run(self, state: AgentWorkflowState) -> AgentNodeResult:
-        skill_definition = self.skill_router.resolve(domain="paper", action="write_chapter")
-        skill_result = self.skill_executor.execute(
-            skill_definition.id,
+        domain = "paper"
+        action = "write_chapter"
+        outcome = self.run_skill_action(
+            state,
+            skill_executor=self.skill_executor,
+            skill_router=self.skill_router,
+            domain=domain,
+            action=action,
+            payload=
             {
                 "chapter_key": state.input["chapter_key"],
                 "outline": state.data.get("outline", {}),
@@ -108,18 +115,15 @@ class ChapterWriterNode(AgentNode):
                 "literature_context": state.data.get("literature_context", ""),
                 "existing_chapters": state.data.get("existing_chapters", {}),
             },
-            context=SkillExecutionContext(
-                user_id=state.user_id,
-                project_id=state.project_id,
-                draft_id=state.input.get("draft_id"),
-                state={"writing_agent": self.writing_agent},
-            ),
+            context_state={"writing_agent": self.writing_agent},
         )
-        result = skill_result.output
+        if not outcome.ok:
+            return outcome.failed_result
+        result = outcome.output
         return AgentNodeResult.success(
             data_delta={"chapter_result": result},
             metadata={
-                "skill_id": skill_result.skill_id,
+                **outcome.metadata,
                 "chapter_key": state.input["chapter_key"],
                 "citation_count": len(result.get("citations", []) or []),
                 "data_based": bool(result.get("data_based")),
@@ -127,7 +131,7 @@ class ChapterWriterNode(AgentNode):
         )
 
 
-class GroundingGuardNode(AgentNode):
+class GroundingGuardNode(SkillNodeMixin, AgentNode):
     """校验章节引用和具体数据表述是否有依据。"""
 
     name = "grounding_guard"
@@ -137,9 +141,15 @@ class GroundingGuardNode(AgentNode):
         self.skill_router = skill_router
 
     def run(self, state: AgentWorkflowState) -> AgentNodeResult:
-        skill_definition = self.skill_router.resolve(domain="paper", action="validate_chapter")
-        skill_result = self.skill_executor.execute(
-            skill_definition.id,
+        domain = "paper"
+        action = "validate_chapter"
+        outcome = self.run_skill_action(
+            state,
+            skill_executor=self.skill_executor,
+            skill_router=self.skill_router,
+            domain=domain,
+            action=action,
+            payload=
             {
                 "chapter_key": state.input["chapter_key"],
                 "result": state.data.get("chapter_result", {}),
@@ -147,18 +157,14 @@ class GroundingGuardNode(AgentNode):
                 "papers": state.data.get("papers", []),
                 "evidence_items": state.data.get("evidence_items", []),
             },
-            context=SkillExecutionContext(
-                user_id=state.user_id,
-                project_id=state.project_id,
-                draft_id=state.input.get("draft_id"),
-                state={},
-            ),
         )
-        validated = skill_result.output
+        if not outcome.ok:
+            return outcome.failed_result
+        validated = outcome.output
         return AgentNodeResult.success(
             data_delta={"validated_chapter_result": validated},
             metadata={
-                "skill_id": skill_result.skill_id,
+                **outcome.metadata,
                 "citations": validated.get("citations", []),
                 "data_based": bool(validated.get("data_based")),
             },

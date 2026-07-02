@@ -11,7 +11,6 @@ from ..models.draft import Draft
 from ..models.outcome import Outcome
 from ..models.project import Project
 from ..models.project_design import ProjectDesign
-from ..models.proposal import Proposal
 from ..models.research_direction import ResearchDirection
 from ..models.user import User
 
@@ -101,16 +100,3 @@ def get_owned_design(design_id: UUID | str, current_user: User, db: Session) -> 
     if not design:
         raise HTTPException(status_code=404, detail="项目设计不存在")
     return design
-
-
-def get_owned_proposal(proposal_id: UUID | str, current_user: User, db: Session) -> Proposal:
-    """返回当前用户拥有项目下的开题报告。"""
-    proposal = (
-        db.query(Proposal)
-        .join(Project, Proposal.project_id == Project.id)
-        .filter(Proposal.id == UUID(str(proposal_id)), Project.user_id == current_user.id)
-        .first()
-    )
-    if not proposal:
-        raise HTTPException(status_code=404, detail="开题报告不存在")
-    return proposal

@@ -10,13 +10,11 @@ _LAZY_EXPORTS = {
     "research_direction_agent": (".research_direction_agent", "research_direction_agent"),
     "project_design_agent": (".project_design_agent", "project_design_agent"),
     "ppt_agent": (".ppt_agent", "ppt_agent"),
-    "proposal_agent": (".proposal_agent", "proposal_agent"),
     "chat_stream": (".chat_agent", "chat_stream"),
     "extract_keywords": (".chat_agent", "extract_keywords"),
     "ACADEMIC_SYSTEM_PROMPT": (".chat_agent", "ACADEMIC_SYSTEM_PROMPT"),
     "outcome_agent": (".outcome_agent", "outcome_agent"),
     "paper_writing_agent": (".paper_writing_agent", "paper_writing_agent"),
-    "defense_ppt_agent": (".defense_ppt_agent", "defense_ppt_agent"),
 }
 
 __all__ = sorted(_LAZY_EXPORTS.keys())

@@ -4,6 +4,23 @@ from datetime import UTC, datetime
 from typing import Any
 
 
+WORKFLOW_EVENT_TYPES = (
+    "workflow_started",
+    "node_started",
+    "node_finished",
+    "workflow_finished",
+)
+
+WORKFLOW_STATUSES = (
+    "pending",
+    "running",
+    "success",
+    "failed",
+    "skipped",
+    "partial_success",
+)
+
+
 @dataclass(frozen=True)
 class AgentWorkflowEvent:
     """记录 workflow 或单个节点的执行状态变化。"""

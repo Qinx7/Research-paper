@@ -3,8 +3,8 @@ from pydantic import BaseModel
 from typing import Optional
 
 
-class GenerateProposalPPTRequest(BaseModel):
-    """开题 PPT 生成请求"""
+class GeneratePPTRequest(BaseModel):
+    """通用 PPT 生成请求"""
     design: dict = {}
     template: str = "academic_blue"
 
@@ -15,7 +15,6 @@ class GenerateHtmlDeckRequest(BaseModel):
     slides_outline: list[dict] = []
     theme: str = "paper"
     draft_id: Optional[str] = None
-    proposal_id: Optional[str] = None
 
 
 class PPTStyleOut(BaseModel):

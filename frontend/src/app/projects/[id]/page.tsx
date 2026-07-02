@@ -1,34 +1,33 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import KnowledgeGraph from "@/components/KnowledgeGraph";
 import PaperWorkflow from "@/components/PaperWorkflow";
+import ProjectDeliveryWorkspace from "@/components/ProjectDeliveryWorkspace";
 import ProjectLiteratureLibrary from "@/components/ProjectLiteratureLibrary";
 import ProjectLiteratureMatrix from "@/components/ProjectLiteratureMatrix";
 import ZoteroSync from "@/components/ZoteroSync";
 import { groupDocumentSearchResults } from "@/lib/documentSearchGrouping.mjs";
 import { highlightDocumentSearchText } from "@/lib/documentSearchHighlight.mjs";
+import { buildOutcomeKnowledgeSummary } from "@/lib/outcomeKnowledgeSummary.mjs";
 import { buildDocumentUsageLinks } from "@/lib/documentSearchUsage.mjs";
 import {
   deleteProject,
-  generateHtmlDeckArtifact,
   getProject,
   getProjectWorkspace,
   indexOutcomeKnowledge,
-  openHtmlPreviewWithAuth,
   searchProjectDocuments,
 } from "@/lib/api";
 import type {
   Project,
-  ProjectWorkspaceChapter,
   ProjectDocumentSearchResult,
+  ProjectWorkspaceChapter,
   ProjectWorkspaceSnapshot,
 } from "@/lib/types";
 
 type ViewMode = "overview" | "literature" | "matrix" | "paper" | "knowledge" | "zotero" | "delivery";
 type HighlightType = "outcome" | "chunk" | "paper" | "note";
-type HtmlDeckTheme = "paper" | "swiss";
 
 const VIEWS: { key: ViewMode; label: string }[] = [
   { key: "overview", label: "项目概览" },
@@ -39,6 +38,24 @@ const VIEWS: { key: ViewMode; label: string }[] = [
   { key: "knowledge", label: "知识图谱" },
   { key: "zotero", label: "Zotero 导入" },
 ];
+
+const PROJECT_THEME = {
+  pageBg: "#f7f9fb",
+  panel: "#ffffff",
+  panelSoft: "#f3f7fb",
+  border: "#dfe7ef",
+  borderStrong: "#cbd8e6",
+  text: "#16202a",
+  muted: "#647282",
+  faint: "#93a0ad",
+  blue: "#168fe3",
+  blueDark: "#0d72bd",
+  blueSoft: "#eaf6ff",
+  green: "#1f9d68",
+  warn: "#b7791f",
+  warnSoft: "#fff7e8",
+  shadow: "0 14px 32px rgba(15, 35, 55, 0.07)",
+};
 
 function isViewMode(value: string | null): value is ViewMode {
   return Boolean(value && VIEWS.some((item) => item.key === value));
@@ -62,6 +79,7 @@ export default function ProjectDetailPage() {
   const [documentSearching, setDocumentSearching] = useState(false);
   const [documentResults, setDocumentResults] = useState<ProjectDocumentSearchResult[]>([]);
   const [documentSearchError, setDocumentSearchError] = useState<string | null>(null);
+
   const highlightType = searchParams.get("highlight_type") as HighlightType | null;
   const highlightId = searchParams.get("highlight_id");
   const highlightChapterKey = searchParams.get("chapter_key");
@@ -69,11 +87,8 @@ export default function ProjectDetailPage() {
   const setViewWithQuery = useCallback((nextView: ViewMode) => {
     setView(nextView);
     const nextParams = new URLSearchParams(searchParams.toString());
-    if (nextView === "overview") {
-      nextParams.delete("view");
-    } else {
-      nextParams.set("view", nextView);
-    }
+    if (nextView === "overview") nextParams.delete("view");
+    else nextParams.set("view", nextView);
     const query = nextParams.toString();
     router.replace(query ? `/projects/${projectId}?${query}` : `/projects/${projectId}`);
   }, [projectId, router, searchParams]);
@@ -85,9 +100,7 @@ export default function ProjectDetailPage() {
 
   useEffect(() => {
     const requestedView = searchParams.get("view");
-    if (isViewMode(requestedView)) {
-      setView(requestedView);
-    }
+    if (isViewMode(requestedView)) setView(requestedView);
   }, [searchParams]);
 
   useEffect(() => {
@@ -102,9 +115,7 @@ export default function ProjectDetailPage() {
 
   useEffect(() => {
     getProject(projectId).then(setProject).catch(() => setProject(null));
-    loadWorkspace().catch(() => {
-      setWorkspace(null);
-    });
+    loadWorkspace().catch(() => setWorkspace(null));
   }, [loadWorkspace, projectId]);
 
   const handleDelete = async () => {
@@ -136,7 +147,6 @@ export default function ProjectDetailPage() {
       setDocumentSearchError(null);
       return;
     }
-
     setDocumentSearching(true);
     setDocumentSearchError(null);
     try {
@@ -181,66 +191,69 @@ export default function ProjectDetailPage() {
     [documentResults],
   );
 
+  const writingHref = useMemo(() => {
+    const params = new URLSearchParams();
+    params.set("project_id", projectId);
+    const draftId = workspace?.delivery.latest_draft?.id;
+    if (draftId) params.set("draft_id", draftId);
+    return `/writing?${params.toString()}`;
+  }, [projectId, workspace?.delivery.latest_draft?.id]);
+
   return (
-    <div className="min-h-screen bg-[#faf7f2] paper-texture">
-      <header className="border-b border-[#3d3830] bg-[#1a1815]">
-        <div className="mx-auto max-w-6xl px-6 py-6">
+    <div className="min-h-screen" style={{ background: PROJECT_THEME.pageBg }}>
+      <header className="border-b" style={{ borderColor: PROJECT_THEME.border, background: PROJECT_THEME.panel }}>
+        <div className="mx-auto max-w-6xl px-6 py-5">
           <div className="flex flex-wrap items-center gap-3">
             <button
               onClick={() => router.push("/")}
-              className="inline-flex items-center gap-2 text-xs tracking-wide text-[#b8a898] transition-colors hover:text-[#e8e0d0]"
+              className="inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-xs font-medium transition-colors"
+              style={{ borderColor: PROJECT_THEME.border, color: PROJECT_THEME.muted }}
             >
               返回首页
             </button>
           </div>
           <h1
-            className="mt-4 text-2xl font-semibold tracking-wide text-[#e8e0d0]"
-            style={{ fontFamily: "var(--font-cormorant), serif" }}
+            className="mt-4 text-2xl font-semibold tracking-wide"
+            style={{ fontFamily: "var(--font-cormorant), serif", color: PROJECT_THEME.text }}
           >
             {project?.name || "项目详情"}
           </h1>
           {project?.research_field ? (
-            <p className="mt-1 text-xs tracking-wide text-[#8b7355]">{project.research_field}</p>
+            <p className="mt-1 text-xs tracking-wide" style={{ color: PROJECT_THEME.faint }}>
+              {project.research_field}
+            </p>
           ) : null}
         </div>
       </header>
 
-      <nav className="sticky top-0 z-40 border-b border-[#e8e1d5] bg-white">
-        <div className="mx-auto flex max-w-6xl items-center px-6">
+      <nav className="sticky top-0 z-40 border-b backdrop-blur" style={{ borderColor: PROJECT_THEME.border, background: "rgba(255,255,255,0.92)" }}>
+        <div className="mx-auto flex max-w-6xl items-center gap-1 overflow-x-auto px-6 py-2">
           {VIEWS.map((item) => (
             <button
               key={item.key}
               onClick={() => setViewWithQuery(item.key)}
-              className={`relative px-5 py-3.5 text-xs tracking-wide transition-all duration-300 ${
-                view === item.key ? "font-medium text-[#2d2a26]" : "text-[#8b7b6b] hover:text-[#5c4a3a]"
-              }`}
-              style={{ fontFamily: view === item.key ? "var(--font-cormorant), serif" : undefined }}
+              className={`shrink-0 rounded-full border px-4 py-2 text-xs tracking-wide transition-all duration-300 ${view === item.key ? "font-medium" : ""}`}
+              style={{
+                fontFamily: view === item.key ? "var(--font-cormorant), serif" : undefined,
+                color: view === item.key ? PROJECT_THEME.blueDark : PROJECT_THEME.muted,
+                background: view === item.key ? PROJECT_THEME.blueSoft : "transparent",
+                borderColor: view === item.key ? "#b8daf7" : "transparent",
+              }}
             >
               {item.label}
-              <span
-                className={`absolute bottom-0 left-1/2 h-[2px] -translate-x-1/2 bg-[#b8860b] transition-all duration-300 ${
-                  view === item.key ? "w-8 opacity-100" : "w-0 opacity-0"
-                }`}
-              />
             </button>
           ))}
         </div>
       </nav>
 
-      <div className="mx-auto max-w-6xl animate-fade-up px-6 py-10" key={view}>
+      <div className="mx-auto max-w-6xl animate-fade-up px-6 py-8" key={view}>
         {view === "overview" && (
           <div className="space-y-8">
             <div className="decorative-rule">
-              <p
-                className="text-[11px] uppercase tracking-[0.2em] text-[#8b7355]"
-                style={{ fontFamily: "var(--font-cormorant), serif" }}
-              >
+              <p className="text-[11px] uppercase tracking-[0.2em] text-[#8b7355]" style={{ fontFamily: "var(--font-cormorant), serif" }}>
                 Project Overview
               </p>
-              <h2
-                className="mt-1 text-2xl font-semibold text-[#2d2a26]"
-                style={{ fontFamily: "var(--font-cormorant), serif" }}
-              >
+              <h2 className="mt-1 text-2xl font-semibold text-[#2d2a26]" style={{ fontFamily: "var(--font-cormorant), serif" }}>
                 项目概览
               </h2>
             </div>
@@ -249,8 +262,8 @@ export default function ProjectDetailPage() {
 
             <div className="grid grid-cols-1 gap-5 md:grid-cols-2 xl:grid-cols-5">
               <OverviewCard
-                title="开题阶段"
-                description="从研究方向、项目设计一路承接到开题报告。"
+                title="研究阶段"
+                description="从研究方向、项目设计一路承接到通用 PPT 生成。"
                 action="进入研究页"
                 onClick={() => router.push(`/research?project_id=${projectId}`)}
               />
@@ -258,11 +271,11 @@ export default function ProjectDetailPage() {
                 title="论文阶段"
                 description="上传成果、生成大纲并逐章撰写论文内容。"
                 action="进入论文工作流"
-                onClick={() => setViewWithQuery("paper")}
+                onClick={() => router.push(writingHref)}
               />
               <OverviewCard
                 title="交付工作台"
-                description="集中查看草稿、开题报告与 HTML Deck 预览等交付状态。"
+                description="集中查看草稿、通用 PPT 与 HTML Deck 预览等交付状态。"
                 action="打开交付"
                 onClick={() => setViewWithQuery("delivery")}
               />
@@ -280,25 +293,20 @@ export default function ProjectDetailPage() {
               />
             </div>
 
-            <section className="rounded-sm border border-[#e8e1d5] bg-white p-7">
+            <section className="rounded-2xl border p-6" style={{ background: PROJECT_THEME.panel, borderColor: PROJECT_THEME.border, boxShadow: PROJECT_THEME.shadow }}>
               <div className="flex items-start justify-between gap-4">
                 <div>
-                  <p
-                    className="text-[11px] uppercase tracking-[0.2em] text-[#8b7355]"
-                    style={{ fontFamily: "var(--font-cormorant), serif" }}
-                  >
+                  <p className="text-[11px] uppercase tracking-[0.2em]" style={{ fontFamily: "var(--font-cormorant), serif", color: PROJECT_THEME.faint }}>
                     Project Knowledge
                   </p>
-                  <h3
-                    className="mt-1 text-xl font-medium text-[#2d2a26]"
-                    style={{ fontFamily: "var(--font-cormorant), serif" }}
-                  >
+                  <h3 className="mt-1 text-xl font-medium" style={{ fontFamily: "var(--font-cormorant), serif", color: PROJECT_THEME.text }}>
                     项目知识工作台
                   </h3>
                 </div>
                 <button
                   onClick={() => setKnowledgeExpanded((current) => !current)}
-                  className="rounded-sm border border-[#e8e1d5] px-3 py-1.5 text-[11px] tracking-wide text-[#8b7355] transition-colors hover:border-[#d4c8b0] hover:text-[#5c4a3a]"
+                  className="rounded-full border px-3 py-1.5 text-[11px] font-medium transition-colors"
+                  style={{ borderColor: PROJECT_THEME.border, color: PROJECT_THEME.muted }}
                 >
                   {knowledgeExpanded ? "收起明细" : "展开知识工作台"}
                 </button>
@@ -311,115 +319,120 @@ export default function ProjectDetailPage() {
                 <KnowledgeStat label="证据卡片" value={`${workspace?.stats.evidence_cards_total ?? 0} 条`} />
               </div>
 
-              <div className="mt-6 space-y-3">
+              <div className="mt-5 space-y-2.5">
                 {(workspace?.outcomes || []).slice(0, 5).map((outcome) => {
                   const highlighted = highlightType === "outcome" && highlightId === outcome.id;
                   return (
-                  <div
-                    key={outcome.id}
-                    className="flex items-start justify-between gap-4 border-t border-[#f1ece4] pt-3 first:border-t-0 first:pt-0"
-                    style={highlighted ? { background: "#fff8e8", marginInline: "-8px", paddingInline: "8px", borderRadius: "8px" } : undefined}
-                  >
-                    <div className="min-w-0">
-                      <div className="text-sm font-medium text-[#2d2a26]">{outcome.name}</div>
-                      <div className="mt-1 text-xs text-[#8b7b6b]">
-                        {outcome.outcome_type || "成果"} · {formatKnowledgeStatus(outcome.knowledge_status, outcome.chunk_count)}
-                      </div>
-                      {outcome.cited_by_chapters.length > 0 ? (
-                        <div className="mt-1 text-[11px] text-[#b8860b]">
-                          已被引用：{outcome.cited_by_chapters.join("、")}
+                    <div
+                      key={outcome.id}
+                      className="flex items-start justify-between gap-4 rounded-xl border p-3"
+                      style={{
+                        borderColor: highlighted ? "#b8daf7" : PROJECT_THEME.border,
+                        background: highlighted ? PROJECT_THEME.blueSoft : PROJECT_THEME.panelSoft,
+                      }}
+                    >
+                      <div className="min-w-0">
+                        <div className="text-sm font-medium" style={{ color: PROJECT_THEME.text }}>{outcome.name}</div>
+                        <div className="mt-1 text-xs" style={{ color: PROJECT_THEME.muted }}>
+                          {outcome.outcome_type || "成果"} · {formatKnowledgeStatus(outcome.knowledge_status, outcome.chunk_count)}
                         </div>
-                      ) : null}
-                    </div>
-                    <div className="flex shrink-0 items-center gap-2">
-                      <button
-                        onClick={() => handleIndexKnowledge(outcome.id)}
-                        disabled={indexingOutcomeId === outcome.id}
-                        className="rounded-sm border border-[#e8e1d5] px-2 py-1 text-[10px] text-[#8b7355] transition-colors hover:border-[#d4c8b0] hover:text-[#5c4a3a] disabled:opacity-40"
-                      >
-                        {indexingOutcomeId === outcome.id ? "解析中" : "解析入库"}
-                      </button>
-                      {outcome.download_url ? (
-                        <a
-                          href={outcome.download_url}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="rounded-sm border border-[#e8e1d5] px-2 py-1 text-[10px] text-[#8b7355] transition-colors hover:border-[#d4c8b0] hover:text-[#5c4a3a]"
+                        {buildOutcomeKnowledgeSummary(outcome.extra_data) ? (
+                          <div className="mt-1 text-[11px]" style={{ color: PROJECT_THEME.muted }}>
+                            {buildOutcomeKnowledgeSummary(outcome.extra_data)}
+                          </div>
+                        ) : null}
+                        {outcome.cited_by_chapters.length > 0 ? (
+                          <div className="mt-1 text-[11px]" style={{ color: PROJECT_THEME.blueDark }}>
+                            已被引用：{outcome.cited_by_chapters.join("、")}
+                          </div>
+                        ) : null}
+                      </div>
+                      <div className="flex shrink-0 items-center gap-2">
+                        <button
+                          onClick={() => handleIndexKnowledge(outcome.id)}
+                          disabled={indexingOutcomeId === outcome.id}
+                        className="rounded-full border px-2.5 py-1 text-[10px] transition-colors disabled:opacity-40"
+                        style={{ borderColor: PROJECT_THEME.border, color: PROJECT_THEME.muted }}
                         >
-                          下载
-                        </a>
-                      ) : null}
+                          {indexingOutcomeId === outcome.id ? "解析中" : "解析入库"}
+                        </button>
+                        {outcome.download_url ? (
+                          <a
+                            href={outcome.download_url}
+                            target="_blank"
+                            rel="noreferrer"
+                          className="rounded-full border px-2.5 py-1 text-[10px] transition-colors"
+                          style={{ borderColor: PROJECT_THEME.border, color: PROJECT_THEME.muted }}
+                          >
+                            下载
+                          </a>
+                        ) : null}
+                      </div>
                     </div>
-                  </div>
-                )})}
+                  );
+                })}
                 {workspace && workspace.outcomes.length === 0 ? (
-                  <p className="text-xs text-[#8b7b6b]">
+                  <p className="text-xs" style={{ color: PROJECT_THEME.muted }}>
                     当前项目还没有成果材料。上传成果并入知识库后，这里会显示章节引用、来源跳转和交付承接情况。
                   </p>
                 ) : null}
               </div>
 
               {knowledgeExpanded ? (
-                <div className="mt-8 grid grid-cols-1 gap-6 lg:grid-cols-3">
-                    <KnowledgePanel
-                      title="成果入库状态"
-                      items={(workspace?.outcomes || []).map((outcome) => ({
-                        key: outcome.id,
-                        title: outcome.name,
-                        meta: `${outcome.outcome_type || "成果"} · ${formatKnowledgeStatus(outcome.knowledge_status, outcome.chunk_count)}`,
-                        tail: outcome.cited_by_chapters.length ? `${outcome.cited_by_chapters.length} 章引用` : "",
-                        highlighted: highlightType === "outcome" && highlightId === outcome.id,
-                      }))}
-                      emptyText="暂无成果材料。"
-                    />
-                    <KnowledgePanel
-                      title="章节知识映射"
-                      items={(workspace?.chapters || []).map((chapter) => ({
-                        key: chapter.chapter_key,
-                        title: chapter.title,
-                        meta: `${formatChapterStatus(chapter.status)} · ${chapter.evidence_count} 条依据 · ${chapter.word_count} 字`,
-                        tail: chapter.data_based ? "真实数据" : "",
-                        highlighted: highlightChapterKey === chapter.chapter_key,
-                      }))}
-                      emptyText="暂无草稿章节映射。"
-                    />
-                    <KnowledgePanel
-                      title="证据与资料线索"
-                      items={[
-                        ...linkedNotes.slice(0, 6).map((note) => ({
-                          key: note.id,
-                          title: note.title,
-                          meta: `${note.note_type || "证据卡片"}${note.confidence ? ` · ${note.confidence}/100` : ""}`,
-                          tail: "卡片",
-                          highlighted: highlightType === "note" && highlightId === note.id,
-                        })),
-                        ...linkedChunks.slice(0, 6).map((chunk) => ({
-                          key: chunk.id,
-                          title: chunk.title,
-                          meta: `${chunk.source_type || "资料片段"} · ${chunk.source_filename || "来源文件"}`,
-                          tail: "资料",
-                          highlighted: highlightType === "chunk" && highlightId === chunk.id,
-                        })),
-                      ]}
-                      emptyText="暂无可展示的证据卡片或资料片段。"
+                <div className="mt-6 grid grid-cols-1 gap-4 lg:grid-cols-3">
+                  <KnowledgePanel
+                    title="成果入库状态"
+                    items={(workspace?.outcomes || []).map((outcome) => ({
+                      key: outcome.id,
+                      title: outcome.name,
+                      meta: `${outcome.outcome_type || "成果"} · ${formatKnowledgeStatus(outcome.knowledge_status, outcome.chunk_count)}`,
+                      tail: outcome.cited_by_chapters.length ? `${outcome.cited_by_chapters.length} 章引用` : "",
+                      highlighted: highlightType === "outcome" && highlightId === outcome.id,
+                    }))}
+                    emptyText="暂无成果材料。"
+                  />
+                  <KnowledgePanel
+                    title="章节知识映射"
+                    items={(workspace?.chapters || []).map((chapter) => ({
+                      key: chapter.chapter_key,
+                      title: chapter.title,
+                      meta: `${formatChapterStatus(chapter.status)} · ${chapter.evidence_count} 条依据 · ${chapter.word_count} 字`,
+                      tail: chapter.data_based ? "真实数据" : "",
+                      highlighted: highlightChapterKey === chapter.chapter_key,
+                    }))}
+                    emptyText="暂无草稿章节映射。"
+                  />
+                  <KnowledgePanel
+                    title="证据与资料线索"
+                    items={[
+                      ...linkedNotes.slice(0, 6).map((note) => ({
+                        key: note.id,
+                        title: note.title,
+                        meta: `${note.note_type || "证据卡片"}${note.confidence ? ` · ${note.confidence}/100` : ""}`,
+                        tail: "卡片",
+                        highlighted: highlightType === "note" && highlightId === note.id,
+                      })),
+                      ...linkedChunks.slice(0, 6).map((chunk) => ({
+                        key: chunk.id,
+                        title: chunk.title,
+                        meta: `${chunk.source_type || "资料片段"} · ${chunk.source_filename || "来源文件"}`,
+                        tail: "资料",
+                        highlighted: highlightType === "chunk" && highlightId === chunk.id,
+                      })),
+                    ]}
+                    emptyText="暂无可展示的证据卡片或资料片段。"
                   />
                 </div>
               ) : null}
             </section>
 
-            <section className="rounded-sm border border-[#e8e1d5] bg-white p-7">
+            <section className="rounded-2xl border p-6" style={{ background: PROJECT_THEME.panel, borderColor: PROJECT_THEME.border, boxShadow: PROJECT_THEME.shadow }}>
               <div className="flex flex-wrap items-center justify-between gap-4">
                 <div>
-                  <p
-                    className="text-[11px] uppercase tracking-[0.2em] text-[#8b7355]"
-                    style={{ fontFamily: "var(--font-cormorant), serif" }}
-                  >
+                  <p className="text-[11px] uppercase tracking-[0.2em]" style={{ fontFamily: "var(--font-cormorant), serif", color: PROJECT_THEME.faint }}>
                     Document Search
                   </p>
-                  <h3
-                    className="mt-1 text-xl font-medium text-[#2d2a26]"
-                    style={{ fontFamily: "var(--font-cormorant), serif" }}
-                  >
+                  <h3 className="mt-1 text-xl font-medium" style={{ fontFamily: "var(--font-cormorant), serif", color: PROJECT_THEME.text }}>
                     项目资料全文搜索
                   </h3>
                 </div>
@@ -434,12 +447,14 @@ export default function ProjectDetailPage() {
                     if (event.key === "Enter") void handleDocumentSearch();
                   }}
                   placeholder="输入关键词，例如：RAG、实验数据、问卷、访谈..."
-                  className="h-11 flex-1 rounded-sm border border-[#e8e1d5] bg-[#fcfbf8] px-4 text-sm outline-none"
+                  className="h-11 flex-1 rounded-2xl border px-4 text-sm outline-none"
+                  style={{ borderColor: PROJECT_THEME.border, background: PROJECT_THEME.panelSoft, color: PROJECT_THEME.text }}
                 />
                 <button
                   onClick={() => void handleDocumentSearch()}
                   disabled={documentSearching}
-                  className="rounded-sm bg-[#1a1815] px-5 py-2.5 text-[11px] uppercase tracking-wide text-[#e8e0d0] disabled:opacity-50"
+                  className="rounded-full px-5 py-2.5 text-[11px] font-semibold text-white disabled:opacity-50"
+                  style={{ background: PROJECT_THEME.blue }}
                 >
                   {documentSearching ? "搜索中..." : "搜索资料"}
                 </button>
@@ -458,27 +473,28 @@ export default function ProjectDetailPage() {
                     download_url: string;
                     hits: ProjectDocumentSearchResult[];
                   }) => (
-                    <div key={`${group.source_filename}-${group.download_url}`} className="rounded-sm border border-[#efe8dc] bg-[#fcfbf8] p-4">
+                    <div key={`${group.source_filename}-${group.download_url}`} className="rounded-2xl border p-4" style={{ background: PROJECT_THEME.panelSoft, borderColor: PROJECT_THEME.border }}>
                       <div className="flex items-start justify-between gap-4">
                         <div className="min-w-0 flex-1">
-                          <div className="text-sm font-medium text-[#2d2a26]">{group.title}</div>
-                          <div className="mt-1 text-xs text-[#8b7355]">
+                          <div className="text-sm font-medium" style={{ color: PROJECT_THEME.text }}>{group.title}</div>
+                          <div className="mt-1 text-xs" style={{ color: PROJECT_THEME.muted }}>
                             {group.source_filename || "来源文件"}
                             {group.source_type ? ` · ${group.source_type}` : ""}
                           </div>
                           <div className="mt-4 space-y-3">
                             {group.hits.map((item: ProjectDocumentSearchResult) => (
-                              <div key={item.chunk_id} className="rounded-sm border border-[#e8e1d5] bg-white p-3">
+                              <div key={item.chunk_id} className="rounded-2xl border bg-white p-3" style={{ borderColor: PROJECT_THEME.border }}>
                                 {item.section_title ? (
-                                  <div className="mb-2 text-[11px] text-[#8b7355]">
+                                  <div className="mb-2 text-[11px]" style={{ color: PROJECT_THEME.faint }}>
                                     所属章节：{item.section_title}
                                   </div>
                                 ) : null}
-                                <p className="text-xs leading-6 text-[#8b7b6b]">
+                                <p className="text-xs leading-6" style={{ color: PROJECT_THEME.muted }}>
                                   {highlightDocumentSearchText(item.content_excerpt, documentQuery).map((part: { text: string; highlight: boolean }, index: number) => (
                                     <span
                                       key={`${item.chunk_id}-${index}`}
-                                      className={part.highlight ? "rounded-sm bg-[#fff1c7] px-0.5 text-[#6f4f00]" : undefined}
+                                      className={part.highlight ? "rounded-sm px-0.5" : undefined}
+                                      style={part.highlight ? { background: PROJECT_THEME.warnSoft, color: "#6f4f00" } : undefined}
                                     >
                                       {part.text}
                                     </span>
@@ -486,19 +502,30 @@ export default function ProjectDetailPage() {
                                 </p>
                                 {item.score_reasons.length > 0 ? (
                                   <div className="mt-3 flex flex-wrap gap-2">
-                                    {item.score_reasons.map((reason, index) => (
-                                      <span key={`${item.chunk_id}-${reason}-${index}`} className="rounded-full border border-[#e8e1d5] bg-[#fcfbf8] px-2.5 py-1 text-[10px] text-[#8b7355]">
-                                        {reason}
-                                      </span>
-                                    ))}
+                                    {item.score_reasons.map((reason, index) => {
+                                      const semantic = reason.includes("语义相似");
+                                      return (
+                                        <span
+                                          key={`${item.chunk_id}-${reason}-${index}`}
+                                          className="rounded-full border px-2.5 py-1 text-[10px]"
+                                          style={{
+                                            borderColor: semantic ? "#b8daf7" : PROJECT_THEME.border,
+                                            background: semantic ? "#eaf6ff" : PROJECT_THEME.panel,
+                                            color: semantic ? PROJECT_THEME.blueDark : PROJECT_THEME.muted,
+                                          }}
+                                        >
+                                          {reason}
+                                        </span>
+                                      );
+                                    })}
                                   </div>
                                 ) : null}
                               </div>
                             ))}
                           </div>
                           {buildDocumentUsageLinks(group, workspace, projectId).length > 0 ? (
-                            <div className="mt-4 border-t border-[#e8e1d5] pt-4">
-                              <div className="mb-2 text-[11px] uppercase tracking-[0.16em] text-[#8b7355]">
+                              <div className="mt-4 border-t pt-4" style={{ borderColor: PROJECT_THEME.border }}>
+                                <div className="mb-2 text-[11px] uppercase tracking-[0.16em]" style={{ color: PROJECT_THEME.faint }}>
                                 写作页使用情况
                               </div>
                               <div className="flex flex-wrap gap-2">
@@ -506,7 +533,8 @@ export default function ProjectDetailPage() {
                                   <a
                                     key={link.key}
                                     href={link.href}
-                                    className="rounded-sm border border-[#e8e1d5] bg-white px-3 py-1.5 text-[11px] tracking-wide text-[#8b7355] transition-colors hover:border-[#d4c8b0] hover:text-[#5c4a3a]"
+                                    className="rounded-full border bg-white px-3 py-1.5 text-[11px] tracking-wide transition-colors"
+                                    style={{ borderColor: PROJECT_THEME.border, color: PROJECT_THEME.muted }}
                                   >
                                     查看 {link.title}
                                   </a>
@@ -519,7 +547,8 @@ export default function ProjectDetailPage() {
                           href={group.download_url}
                           target="_blank"
                           rel="noreferrer"
-                          className="shrink-0 rounded-sm border border-[#e8e1d5] px-3 py-1.5 text-[11px] tracking-wide text-[#8b7355] transition-colors hover:border-[#d4c8b0] hover:text-[#5c4a3a]"
+                          className="shrink-0 rounded-full border px-3 py-1.5 text-[11px] tracking-wide transition-colors"
+                          style={{ borderColor: PROJECT_THEME.border, color: PROJECT_THEME.muted }}
                         >
                           下载原文件
                         </a>
@@ -539,54 +568,50 @@ export default function ProjectDetailPage() {
             </section>
 
             {workspace?.chapters?.length ? (
-              <section className="rounded-sm border border-[#e8e1d5] bg-white p-7">
+              <section className="rounded-2xl border p-6" style={{ background: PROJECT_THEME.panel, borderColor: PROJECT_THEME.border, boxShadow: PROJECT_THEME.shadow }}>
                 <div className="flex items-center justify-between gap-4">
                   <div>
-                    <p
-                      className="text-[11px] uppercase tracking-[0.2em] text-[#8b7355]"
-                      style={{ fontFamily: "var(--font-cormorant), serif" }}
-                    >
+                    <p className="text-[11px] uppercase tracking-[0.2em]" style={{ fontFamily: "var(--font-cormorant), serif", color: PROJECT_THEME.faint }}>
                       Chapter Mapping
                     </p>
-                    <h3
-                      className="mt-1 text-xl font-medium text-[#2d2a26]"
-                      style={{ fontFamily: "var(--font-cormorant), serif" }}
-                    >
+                    <h3 className="mt-1 text-xl font-medium" style={{ fontFamily: "var(--font-cormorant), serif", color: PROJECT_THEME.text }}>
                       章节依据映射
                     </h3>
                   </div>
                   <button
-                    onClick={() => setViewWithQuery("paper")}
-                    className="rounded-sm border border-[#e8e1d5] px-3 py-1.5 text-[11px] tracking-wide text-[#8b7355] transition-colors hover:border-[#d4c8b0] hover:text-[#5c4a3a]"
+                    onClick={() => router.push(writingHref)}
+                    className="rounded-full border px-3 py-1.5 text-[11px] font-medium transition-colors"
+                    style={{ borderColor: PROJECT_THEME.border, color: PROJECT_THEME.muted }}
                   >
                     进入论文工作流
                   </button>
                 </div>
 
                 <div className="mt-6 grid grid-cols-1 gap-4 xl:grid-cols-2">
-                    {workspace.chapters.map((chapter) => (
-                      <ChapterTraceCard
-                        key={chapter.chapter_key}
-                        chapter={chapter}
-                        highlightedChapter={highlightChapterKey === chapter.chapter_key}
-                        highlightedType={highlightType}
-                        highlightedId={highlightId}
-                      />
-                    ))}
-                  </div>
-                </section>
+                  {workspace.chapters.map((chapter) => (
+                    <ChapterTraceCard
+                      key={chapter.chapter_key}
+                      chapter={chapter}
+                      highlightedChapter={highlightChapterKey === chapter.chapter_key}
+                      highlightedType={highlightType}
+                      highlightedId={highlightId}
+                    />
+                  ))}
+                </div>
+              </section>
             ) : null}
 
-            <div className="border-t border-[#e8e1d5] pt-8">
+            <div className="border-t pt-8" style={{ borderColor: PROJECT_THEME.border }}>
               {!deleteConfirm ? (
                 <button
                   onClick={() => setDeleteConfirm(true)}
-                  className="text-xs tracking-wide text-[#b8a898] transition-colors hover:text-[#c44]"
+                  className="rounded-full border px-3 py-1.5 text-xs font-medium transition-colors hover:text-[#c44]"
+                  style={{ borderColor: PROJECT_THEME.border, color: PROJECT_THEME.faint }}
                 >
                   删除此项目
                 </button>
               ) : (
-                <div className="flex max-w-md items-center gap-3 rounded-sm border border-red-200 bg-red-50/50 p-4">
+                <div className="flex max-w-md items-center gap-3 rounded-2xl border bg-red-50/50 p-4" style={{ borderColor: "rgba(220, 38, 38, 0.22)" }}>
                   <span className="text-xs text-red-700">
                     确定要删除此项目吗？所有关联的文献记录、论文草稿和成果文件都将被永久删除，且不可恢复。
                   </span>
@@ -611,11 +636,10 @@ export default function ProjectDetailPage() {
         )}
 
         {view === "delivery" && (
-          <DeliveryWorkspace
-            projectId={projectId}
+          <ProjectDeliveryWorkspace
             workspace={workspace}
             onOpenResearch={() => router.push(`/research?project_id=${projectId}`)}
-            onOpenWriting={() => setViewWithQuery("paper")}
+            onOpenWriting={() => router.push(writingHref)}
           />
         )}
 
@@ -627,166 +651,6 @@ export default function ProjectDetailPage() {
           <ZoteroSync projectId={projectId} onImportComplete={() => setKgRefreshKey((current) => current + 1)} />
         ) : null}
       </div>
-    </div>
-  );
-}
-
-function DeliveryWorkspace({
-  projectId,
-  workspace,
-  onOpenResearch,
-  onOpenWriting,
-}: {
-  projectId: string;
-  workspace: ProjectWorkspaceSnapshot | null;
-  onOpenResearch: () => void;
-  onOpenWriting: () => void;
-}) {
-  const latestDraft = workspace?.delivery.latest_draft ?? null;
-  const latestProposal = workspace?.delivery.latest_proposal ?? null;
-  const [deckMessage, setDeckMessage] = useState<string | null>(null);
-  const [generatingDraftDeck, setGeneratingDraftDeck] = useState(false);
-  const [generatingProposalDeck, setGeneratingProposalDeck] = useState(false);
-  const [htmlDeckTheme, setHtmlDeckTheme] = useState<HtmlDeckTheme>("paper");
-
-  const handlePreviewDraftDeck = async () => {
-    if (!latestDraft?.id) return;
-    setGeneratingDraftDeck(true);
-    setDeckMessage(null);
-    try {
-      const artifact = await generateHtmlDeckArtifact({
-        draft_id: latestDraft.id,
-        deck_title: latestDraft.title,
-        theme: htmlDeckTheme,
-      });
-      await openHtmlPreviewWithAuth(artifact.preview_url);
-      setDeckMessage("已打开论文草稿 HTML Deck 预览。");
-    } catch (error: any) {
-      setDeckMessage(error?.message || "论文草稿 HTML Deck 预览失败");
-    } finally {
-      setGeneratingDraftDeck(false);
-    }
-  };
-
-  const handlePreviewProposalDeck = async () => {
-    if (!latestProposal?.id) return;
-    setGeneratingProposalDeck(true);
-    setDeckMessage(null);
-    try {
-      const artifact = await generateHtmlDeckArtifact({
-        proposal_id: latestProposal.id,
-        deck_title: latestProposal.title,
-        theme: htmlDeckTheme,
-      });
-      await openHtmlPreviewWithAuth(artifact.preview_url);
-      setDeckMessage("已打开开题报告 HTML Deck 预览。");
-    } catch (error: any) {
-      setDeckMessage(error?.message || "开题报告 HTML Deck 预览失败");
-    } finally {
-      setGeneratingProposalDeck(false);
-    }
-  };
-
-  return (
-    <div className="space-y-8">
-      <div className="decorative-rule">
-        <p
-          className="text-[11px] uppercase tracking-[0.2em] text-[#8b7355]"
-          style={{ fontFamily: "var(--font-cormorant), serif" }}
-        >
-          Delivery Workspace
-        </p>
-        <h2
-          className="mt-1 text-2xl font-semibold text-[#2d2a26]"
-          style={{ fontFamily: "var(--font-cormorant), serif" }}
-        >
-          交付工作台
-        </h2>
-      </div>
-
-      <section className="rounded-sm border border-[#e8e1d5] bg-white p-5">
-        <div>
-          <p className="text-[11px] uppercase tracking-[0.18em] text-[#8b7355]">HTML Deck Theme</p>
-          <p className="mt-1 text-sm text-[#8b7b6b]">实验型网页 Deck 预览将使用这里选择的风格。</p>
-        </div>
-        <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-2">
-          <HtmlDeckThemeCard
-            title="Paper"
-            subtitle="论文页风格"
-            description="偏纸面、衬线字体、适合学术汇报和论文导出预览。"
-            active={htmlDeckTheme === "paper"}
-            onClick={() => setHtmlDeckTheme("paper")}
-          />
-          <HtmlDeckThemeCard
-            title="Swiss"
-            subtitle="现代展示风格"
-            description="更现代的无衬线演示观感，适合路演、预演和页面展示。"
-            active={htmlDeckTheme === "swiss"}
-            onClick={() => setHtmlDeckTheme("swiss")}
-          />
-        </div>
-      </section>
-
-      <div className="grid grid-cols-1 gap-5 xl:grid-cols-3">
-        <DeliveryCard
-          title="论文草稿"
-          subtitle={latestDraft ? `${latestDraft.completion_rate}% 完成 · v${latestDraft.version}` : "尚未创建草稿"}
-          description={latestDraft ? `${latestDraft.completed_chapters}/${latestDraft.total_chapters} 章已形成可写作内容。` : "先进入论文工作流创建并生成草稿。"}
-          primaryLabel={latestDraft ? "继续写作" : "进入论文工作流"}
-          onPrimary={onOpenWriting}
-          secondaryLinks={latestDraft ? [
-            { label: "下载 DOCX", href: latestDraft.download_docx_url },
-            { label: "下载 PDF", href: latestDraft.download_pdf_url },
-          ] : []}
-          secondaryActions={latestDraft ? [
-            { label: generatingDraftDeck ? "生成中..." : "预览 HTML Deck", onClick: handlePreviewDraftDeck, disabled: generatingDraftDeck },
-          ] : []}
-        />
-        <DeliveryCard
-          title="开题报告"
-          subtitle={latestProposal ? "已生成最新开题报告" : "尚未生成开题报告"}
-          description={latestProposal ? latestProposal.title : "从研究页进入项目设计后可继续生成开题报告与开题材料。"}
-          primaryLabel={latestProposal ? "打开研究页" : "前往研究页"}
-          onPrimary={onOpenResearch}
-          secondaryLinks={latestProposal ? [
-            { label: "下载 DOCX", href: latestProposal.download_docx_url },
-            { label: "下载 PDF", href: latestProposal.download_pdf_url },
-          ] : []}
-          secondaryActions={latestProposal ? [
-            { label: generatingProposalDeck ? "生成中..." : "预览 HTML Deck", onClick: handlePreviewProposalDeck, disabled: generatingProposalDeck },
-          ] : []}
-        />
-      </div>
-
-      {deckMessage ? (
-        <div className="rounded-sm border border-[#e8e1d5] bg-white px-4 py-3 text-sm text-[#8b7355]">
-          {deckMessage}
-        </div>
-      ) : null}
-
-      <section className="rounded-sm border border-[#e8e1d5] bg-white p-7">
-        <div className="mb-5">
-          <p
-            className="text-[11px] uppercase tracking-[0.2em] text-[#8b7355]"
-            style={{ fontFamily: "var(--font-cormorant), serif" }}
-          >
-            Delivery Status
-          </p>
-          <h3
-            className="mt-1 text-xl font-medium text-[#2d2a26]"
-            style={{ fontFamily: "var(--font-cormorant), serif" }}
-          >
-            可交付状态总览
-          </h3>
-        </div>
-
-        <div className="grid grid-cols-1 gap-4 md:grid-cols-4">
-          <KnowledgeStat label="论文草稿" value={latestDraft ? `${latestDraft.completion_rate}%` : "未开始"} />
-          <KnowledgeStat label="开题报告" value={latestProposal ? "已生成" : "待生成"} />
-          <KnowledgeStat label="HTML Deck 预览" value={latestDraft || latestProposal ? "可生成" : "待内容"} />
-          <KnowledgeStat label="成果材料" value={`${workspace?.stats.outcomes_total ?? 0} 项`} />
-        </div>
-      </section>
     </div>
   );
 }
@@ -970,7 +834,7 @@ function EvidenceDetailSection({
   emptyText,
 }: {
   title: string;
-  items: React.ReactNode[];
+  items: ReactNode[];
   emptyText: string;
 }) {
   return (
@@ -1043,118 +907,11 @@ function EvidenceLinkCard({
   );
 }
 
-function DeliveryCard({
-  title,
-  subtitle,
-  description,
-  primaryLabel,
-  onPrimary,
-  secondaryLinks,
-  secondaryActions,
-}: {
-  title: string;
-  subtitle: string;
-  description: string;
-  primaryLabel: string;
-  onPrimary: () => void;
-  secondaryLinks: { label: string; href: string }[];
-  secondaryActions?: { label: string; onClick: () => void; disabled?: boolean }[];
-}) {
-  return (
-    <div className="rounded-sm border border-[#e8e1d5] bg-white p-6">
-      <h3 className="text-lg font-medium text-[#2d2a26]" style={{ fontFamily: "var(--font-cormorant), serif" }}>
-        {title}
-      </h3>
-      <p className="mt-2 text-sm text-[#8b7355]">{subtitle}</p>
-      <p className="mt-4 text-xs leading-relaxed text-[#8b7b6b]">{description}</p>
-      <div className="mt-5 flex flex-wrap gap-2">
-        <button
-          onClick={onPrimary}
-          className="rounded-sm bg-[#1a1815] px-4 py-2 text-[11px] uppercase tracking-wide text-[#e8e0d0]"
-        >
-          {primaryLabel}
-        </button>
-        {secondaryLinks.map((item) => (
-          <a
-            key={item.label}
-            href={item.href}
-            target="_blank"
-            rel="noreferrer"
-            className="rounded-sm border border-[#e8e1d5] px-4 py-2 text-[11px] uppercase tracking-wide text-[#8b7355]"
-          >
-            {item.label}
-          </a>
-        ))}
-        {(secondaryActions || []).map((item) => (
-          <button
-            key={item.label}
-            type="button"
-            onClick={item.onClick}
-            disabled={item.disabled}
-            className="rounded-sm border border-[#e8e1d5] px-4 py-2 text-[11px] uppercase tracking-wide text-[#8b7355] disabled:opacity-50"
-          >
-            {item.label}
-          </button>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-function HtmlDeckThemeCard({
-  title,
-  subtitle,
-  description,
-  active,
-  onClick,
-}: {
-  title: string;
-  subtitle: string;
-  description: string;
-  active: boolean;
-  onClick: () => void;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className="rounded-sm border p-4 text-left transition-all"
-      style={{
-        borderColor: active ? "#cba35d" : "#e8e1d5",
-        background: active ? "#fffaf0" : "#fcfbf8",
-        boxShadow: active ? "0 0 0 1px rgba(203,163,93,0.22)" : "none",
-      }}
-    >
-      <div className="flex items-start justify-between gap-3">
-        <div>
-          <div className="text-[11px] uppercase tracking-[0.16em] text-[#8b7355]">{subtitle}</div>
-          <div
-            className="mt-2 text-lg font-medium text-[#2d2a26]"
-            style={{ fontFamily: title === "Swiss" ? "\"Helvetica Neue\", Arial, sans-serif" : "var(--font-cormorant), serif" }}
-          >
-            {title}
-          </div>
-        </div>
-        <span
-          className="rounded-full px-2.5 py-1 text-[10px] uppercase tracking-wide"
-          style={{
-            background: active ? "#f7efe0" : "#f1ece4",
-            color: active ? "#8a5a00" : "#8b7355",
-          }}
-        >
-          {active ? "当前使用" : "可选"}
-        </span>
-      </div>
-      <p className="mt-3 text-xs leading-6 text-[#8b7b6b]">{description}</p>
-    </button>
-  );
-}
-
 function KnowledgeStat({ label, value }: { label: string; value: string }) {
   return (
-    <div className="rounded-sm border border-[#efe8dc] bg-[#fcfbf8] px-4 py-4">
-      <div className="text-[11px] uppercase tracking-wide text-[#8b7355]">{label}</div>
-      <div className="mt-2 text-lg font-medium text-[#2d2a26]">{value}</div>
+    <div className="rounded-2xl border px-4 py-4" style={{ background: PROJECT_THEME.panelSoft, borderColor: PROJECT_THEME.border }}>
+      <div className="text-[11px] uppercase tracking-wide" style={{ color: PROJECT_THEME.faint }}>{label}</div>
+      <div className="mt-2 text-lg font-medium" style={{ color: PROJECT_THEME.text }}>{value}</div>
     </div>
   );
 }
@@ -1169,8 +926,8 @@ function KnowledgePanel({
   emptyText: string;
 }) {
   return (
-    <div className="rounded-sm border border-[#efe8dc] bg-[#fcfbf8] p-5">
-      <h4 className="text-sm font-medium text-[#2d2a26]" style={{ fontFamily: "var(--font-cormorant), serif" }}>
+    <div className="rounded-2xl border p-5" style={{ background: PROJECT_THEME.panelSoft, borderColor: PROJECT_THEME.border }}>
+      <h4 className="text-sm font-medium" style={{ fontFamily: "var(--font-cormorant), serif", color: PROJECT_THEME.text }}>
         {title}
       </h4>
       <div className="mt-4 space-y-3">
@@ -1178,18 +935,21 @@ function KnowledgePanel({
           items.map((item) => (
             <div
               key={item.key}
-              className="flex items-start justify-between gap-3 border-t border-[#f1ece4] pt-3 first:border-t-0 first:pt-0"
-              style={item.highlighted ? { background: "#fff8e8", marginInline: "-8px", paddingInline: "8px", borderRadius: "8px" } : undefined}
+              className="flex items-start justify-between gap-3 border-t pt-3 first:border-t-0 first:pt-0"
+              style={{
+                borderColor: PROJECT_THEME.border,
+                ...(item.highlighted ? { background: PROJECT_THEME.blueSoft, marginInline: "-8px", paddingInline: "8px", borderRadius: "8px" } : undefined),
+              }}
             >
               <div className="min-w-0">
-                <div className="truncate text-sm text-[#2d2a26]">{item.title}</div>
-                <div className="mt-1 text-xs text-[#8b7b6b]">{item.meta}</div>
+                <div className="truncate text-sm" style={{ color: PROJECT_THEME.text }}>{item.title}</div>
+                <div className="mt-1 text-xs" style={{ color: PROJECT_THEME.muted }}>{item.meta}</div>
               </div>
-              {item.tail ? <span className="shrink-0 text-[11px] text-[#b8860b]">{item.tail}</span> : null}
+              {item.tail ? <span className="shrink-0 text-[11px]" style={{ color: PROJECT_THEME.blueDark }}>{item.tail}</span> : null}
             </div>
           ))
         ) : (
-          <p className="text-xs text-[#8b7b6b]">{emptyText}</p>
+          <p className="text-xs" style={{ color: PROJECT_THEME.muted }}>{emptyText}</p>
         )}
       </div>
     </div>
@@ -1210,13 +970,14 @@ function OverviewCard({
   return (
     <div
       onClick={onClick}
-      className="accent-card group cursor-pointer rounded-sm border border-[#e8e1d5] bg-white p-7 transition-all duration-300 hover:-translate-y-0.5 hover:border-[#d4c8b0] hover:shadow-xl hover:shadow-[#1a1815]/6"
+      className="accent-card group cursor-pointer rounded-2xl border p-7 transition-all duration-300 hover:-translate-y-0.5"
+      style={{ background: PROJECT_THEME.panel, borderColor: PROJECT_THEME.border, boxShadow: PROJECT_THEME.shadow }}
     >
-      <h3 className="mb-3 text-lg font-medium text-[#2d2a26]" style={{ fontFamily: "var(--font-cormorant), serif" }}>
+      <h3 className="mb-3 text-lg font-medium" style={{ fontFamily: "var(--font-cormorant), serif", color: PROJECT_THEME.text }}>
         {title}
       </h3>
-      <p className="mb-6 text-xs leading-relaxed text-[#8b7b6b]">{description}</p>
-      <span className="text-[10px] uppercase tracking-wider text-[#b8860b] transition-colors group-hover:text-[#8b6914]">
+      <p className="mb-6 text-xs leading-relaxed" style={{ color: PROJECT_THEME.muted }}>{description}</p>
+      <span className="text-[10px] uppercase tracking-wider" style={{ color: PROJECT_THEME.blueDark }}>
         {action} →
       </span>
     </div>

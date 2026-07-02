@@ -26,7 +26,6 @@ def load_project_workspace_snapshot_for_draft(
     from ..models.paper import Paper
     from ..models.paper_note import PaperNote
     from ..models.project_document_chunk import ProjectDocumentChunk
-    from ..models.proposal import Proposal
 
     outcomes = (
         db.query(Outcome)
@@ -58,12 +57,6 @@ def load_project_workspace_snapshot_for_draft(
         .order_by(ProjectDocumentChunk.updated_at.desc())
         .all()
     )
-    proposals = (
-        db.query(Proposal)
-        .filter(Proposal.project_id == project_id)
-        .order_by(Proposal.created_at.desc())
-        .all()
-    )
     return build_project_workspace_snapshot(
         project_id=project_id,
         outcomes=outcomes,
@@ -71,7 +64,6 @@ def load_project_workspace_snapshot_for_draft(
         papers=papers,
         paper_notes=paper_notes,
         chunks=chunks,
-        proposals=proposals,
         active_draft_id=str(active_draft_id) if active_draft_id else None,
     )
 
@@ -84,7 +76,6 @@ def build_project_workspace_snapshot(
     papers: Iterable[Any],
     paper_notes: Iterable[Any],
     chunks: Iterable[Any],
-    proposals: Iterable[Any],
     active_draft_id: str | None = None,
 ) -> dict[str, Any]:
     """构建项目知识与交付工作台快照。"""
@@ -94,10 +85,7 @@ def build_project_workspace_snapshot(
     paper_list = list(papers)
     note_list = list(paper_notes)
     chunk_list = list(chunks)
-    proposal_list = list(proposals)
-
     latest_draft = _resolve_active_draft(draft_list, active_draft_id)
-    latest_proposal = _latest_by(proposal_list, "created_at")
     chapters = _build_chapter_summaries(
         project_id=project_id_str,
         draft=latest_draft,
@@ -118,12 +106,13 @@ def build_project_workspace_snapshot(
             "chunk_count": _knowledge_chunk_count(outcome),
             "download_url": _outcome_download_url(outcome),
             "cited_by_chapters": chapter_titles_by_outcome.get(str(getattr(outcome, "id")), []),
+            "extra_data": getattr(outcome, "extra_data", None) or {},
         }
         for outcome in outcome_list
     ]
 
     indexed_count = sum(1 for outcome in outcome_list if _knowledge_status(outcome) == "indexed")
-    delivery = _build_delivery_summary(project_id_str, latest_draft, latest_proposal, chapters)
+    delivery = _build_delivery_summary(project_id_str, latest_draft, chapters)
 
     return {
         "stats": {
@@ -194,7 +183,7 @@ def _build_chapter_summaries(
             "linked_papers": linked_papers,
             "linked_notes": linked_notes,
             "linked_chunks": linked_chunks,
-            "action_url": f"/projects/{project_id}?view=paper",
+            "action_url": f"/writing?project_id={project_id}&draft_id={getattr(draft, 'id')}",
             "action_label": "进入论文工作流",
         })
     return summaries
@@ -203,17 +192,16 @@ def _build_chapter_summaries(
 def _build_delivery_summary(
     project_id: str,
     latest_draft: Any | None,
-    latest_proposal: Any | None,
     chapters: list[dict[str, Any]],
 ) -> dict[str, Any]:
     latest_draft_summary = None
     has_real_data = False
-    defense_ready = False
-    defense_summary = {
-        "ready": defense_ready,
+    presentation_ready = False
+    presentation_summary = {
+        "ready": presentation_ready,
         "has_real_data": has_real_data,
         "draft_id": None,
-        "action_url": f"/projects/{project_id}?view=paper",
+        "action_url": f"/writing?project_id={project_id}",
         "action_label": "进入论文工作台",
     }
     if latest_draft:
@@ -221,7 +209,7 @@ def _build_delivery_summary(
         chapter_total = max(len(chapters), 1)
         completion_rate = round((completed_count / chapter_total) * 100)
         has_real_data = any(chapter["data_based"] for chapter in chapters)
-        defense_ready = has_real_data
+        presentation_ready = has_real_data
         latest_draft_summary = {
             "id": str(getattr(latest_draft, "id")),
             "title": getattr(latest_draft, "title", "论文草稿"),
@@ -231,32 +219,20 @@ def _build_delivery_summary(
             "completion_rate": completion_rate,
             "download_docx_url": f"/api/drafts/{getattr(latest_draft, 'id')}/download?format=docx",
             "download_pdf_url": f"/api/drafts/{getattr(latest_draft, 'id')}/download?format=pdf",
-            "action_url": f"/projects/{project_id}?view=paper",
+            "action_url": f"/writing?project_id={project_id}&draft_id={getattr(latest_draft, 'id')}",
             "action_label": "继续论文写作",
         }
-        defense_summary = {
-            "ready": defense_ready,
+        presentation_summary = {
+            "ready": presentation_ready,
             "has_real_data": has_real_data,
             "draft_id": str(getattr(latest_draft, "id")),
-            "action_url": f"/projects/{project_id}?view=paper",
+            "action_url": f"/writing?project_id={project_id}&draft_id={getattr(latest_draft, 'id')}",
             "action_label": "进入论文工作台",
-        }
-
-    latest_proposal_summary = None
-    if latest_proposal:
-        latest_proposal_summary = {
-            "id": str(getattr(latest_proposal, "id")),
-            "title": getattr(latest_proposal, "title", "开题报告"),
-            "download_docx_url": f"/api/proposal/{getattr(latest_proposal, 'id')}/download?format=docx",
-            "download_pdf_url": f"/api/proposal/{getattr(latest_proposal, 'id')}/download?format=pdf",
-            "action_url": f"/research?project_id={project_id}",
-            "action_label": "打开研究页",
         }
 
     return {
         "latest_draft": latest_draft_summary,
-        "latest_proposal": latest_proposal_summary,
-        "defense": defense_summary,
+        "presentation": presentation_summary,
     }
 
 

@@ -1,6 +1,9 @@
 """多 Agent workflow 执行记录服务。"""
+import hashlib
+import json
 from datetime import UTC, datetime
 from time import perf_counter
+from typing import Any
 from uuid import UUID
 
 from sqlalchemy.orm import Session
@@ -17,9 +20,12 @@ class AgentWorkflowDbRecorder:
         self.run: AgentWorkflowRun | None = None
         self._step_started_at: dict[str, datetime] = {}
         self._step_timer: dict[str, float] = {}
+        self._step_count = 0
+        self._step_status_counts: dict[str, int] = {}
 
     def workflow_started(self, state: AgentWorkflowState) -> None:
         now = datetime.now(UTC)
+        input_snapshot = _summarize_value(state.input)
         self.run = AgentWorkflowRun(
             id=_parse_uuid(state.run_id),
             workflow_name=state.workflow_name,
@@ -27,7 +33,11 @@ class AgentWorkflowDbRecorder:
             user_id=_parse_uuid(state.user_id),
             project_id=_parse_uuid(state.project_id),
             search_task_id=_parse_uuid(state.search_task_id),
-            input_snapshot=_summarize_value(state.input),
+            workflow_version=str(state.metadata.get("workflow_version") or "1"),
+            trigger_source=str(state.metadata.get("trigger_source") or _infer_trigger_source(state.workflow_name)),
+            visibility=str(state.metadata.get("visibility") or "internal"),
+            input_hash=_hash_snapshot(input_snapshot),
+            input_snapshot=input_snapshot,
             started_at=now,
         )
         self.db.add(self.run)
@@ -47,14 +57,24 @@ class AgentWorkflowDbRecorder:
         step = AgentWorkflowStep(
             run_id=self.run.id,
             node_name=node.name,
+            node_type=getattr(node, "node_type", "task"),
+            node_label=getattr(node, "label", "") or getattr(node, "description", "") or node.name,
             status=result.status,
+            critical=bool(getattr(node, "critical", True)),
+            visible=bool(getattr(node, "visible", False)),
+            skill_id=_extract_skill_id(result.metadata),
+            skill_version=_extract_skill_version(result.metadata),
             input_summary=_summarize_node_input(state, node),
             output_summary=_summarize_node_output(result),
+            warnings=_summarize_value(result.warnings),
+            artifacts=_summarize_value(result.artifacts),
             error_message=result.error,
             duration_ms=duration_ms,
             started_at=started_at,
             finished_at=datetime.now(UTC),
         )
+        self._step_count += 1
+        self._step_status_counts[result.status] = self._step_status_counts.get(result.status, 0) + 1
         self.db.add(step)
         self._commit()
 
@@ -62,7 +82,16 @@ class AgentWorkflowDbRecorder:
         if not self.run:
             return
         self.run.status = state.status
+        self.run.workflow_version = str(state.metadata.get("workflow_version") or self.run.workflow_version or "1")
+        self.run.trigger_source = str(state.metadata.get("trigger_source") or self.run.trigger_source or _infer_trigger_source(state.workflow_name))
+        self.run.visibility = str(state.metadata.get("visibility") or self.run.visibility or "internal")
         self.run.output_snapshot = _summarize_workflow_output(state)
+        self.run.result_ref = _build_result_ref(state)
+        self.run.diagnostics = _build_workflow_diagnostics(
+            state,
+            step_count=self._step_count,
+            step_status_counts=self._step_status_counts,
+        )
         self.run.error_message = "\n".join(state.errors) if state.errors else None
         self.run.finished_at = datetime.now(UTC)
         self._commit()
@@ -130,6 +159,8 @@ def _summarize_node_output(result: AgentNodeResult) -> dict:
         "data_delta": _summarize_value(result.data_delta),
         "evidence_delta_count": len(result.evidence_delta),
         "messages": result.messages[:5],
+        "warnings": _summarize_value(result.warnings),
+        "artifacts": _summarize_value(result.artifacts),
         "metadata": _summarize_value(result.metadata),
     }
     if isinstance(result.metadata, dict):
@@ -148,6 +179,7 @@ def _summarize_workflow_output(state: AgentWorkflowState) -> dict:
         "data_keys": sorted(state.data.keys()),
         "evidence_count": len(state.evidence),
         "messages": state.messages[:10],
+        "workflow_metadata": _summarize_value(state.metadata),
         "total_found": search_result.get("total_found"),
         "selected_sources": search_result.get("selected_sources"),
         "source_statuses": search_result.get("source_statuses"),
@@ -155,12 +187,12 @@ def _summarize_workflow_output(state: AgentWorkflowState) -> dict:
         "summary_overview": summary.get("overview"),
         "failed_sources": diagnostics.get("failed_sources"),
     })
+    if "resolved_skills" in state.metadata:
+        output["resolved_skills"] = _summarize_value(state.metadata.get("resolved_skills"))
     if "chapter_key" in state.input:
         output["chapter_key"] = state.input.get("chapter_key")
     if "evidence_counts" in state.data:
         output["evidence_counts"] = state.data.get("evidence_counts")
-    if "proposal_title" in state.data:
-        output["proposal_title"] = state.data.get("proposal_title")
     if "directions" in state.data:
         directions = state.data.get("directions") or []
         output["directions_count"] = len(directions)
@@ -172,6 +204,114 @@ def _summarize_workflow_output(state: AgentWorkflowState) -> dict:
     if "saved_ids" in state.data:
         output["saved_ids"] = state.data.get("saved_ids")
     return output
+
+
+def _hash_snapshot(snapshot: dict) -> str:
+    """生成稳定输入哈希，用于后续判断历史结果是否可复用。"""
+    payload = json.dumps(snapshot or {}, ensure_ascii=False, sort_keys=True, default=str)
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def _infer_trigger_source(workflow_name: str) -> str:
+    """从 workflow 名称推断默认触发来源。"""
+    mapping = {
+        "home_literature_search": "home_search",
+        "research_direction_generation": "research_page",
+        "project_design_generation": "research_page",
+        "paper_chapter_generation": "writing_page",
+        "html_deck_preview": "ppt_page",
+    }
+    return mapping.get(workflow_name, "")
+
+
+def _extract_skill_id(metadata: dict[str, Any] | None) -> str | None:
+    """从节点 metadata 中提取实际技能 ID。"""
+    metadata = metadata or {}
+    return metadata.get("resolved_skill_id") or metadata.get("skill_id")
+
+
+def _extract_skill_version(metadata: dict[str, Any] | None) -> str | None:
+    """从节点 metadata 中提取技能版本。"""
+    metadata = metadata or {}
+    value = metadata.get("skill_version") or metadata.get("version")
+    return str(value) if value is not None else None
+
+
+def _build_result_ref(state: AgentWorkflowState) -> dict[str, Any]:
+    """提取可恢复结果引用，避免记录完整大对象。"""
+    result_ref: dict[str, Any] = {}
+    if state.search_task_id:
+        result_ref["search_task_id"] = state.search_task_id
+    if state.project_id:
+        result_ref["project_id"] = state.project_id
+
+    for key in (
+        "draft_id",
+        "chapter_key",
+        "direction_id",
+        "design_id",
+    ):
+        value = state.input.get(key)
+        if value:
+            result_ref[key] = value
+
+    for key in (
+        "artifact_id",
+        "object_key",
+        "preview_url",
+        "download_url",
+        "saved_id",
+        "saved_ids",
+        "draft_version",
+    ):
+        value = state.data.get(key)
+        if value:
+            result_ref[key] = _summarize_value(value)
+
+    search_result = state.data.get("search_result")
+    if isinstance(search_result, dict):
+        if search_result.get("query"):
+            result_ref["query"] = search_result.get("query")
+        papers = search_result.get("papers")
+        if isinstance(papers, list):
+            result_ref["paper_count"] = len(papers)
+        elif search_result.get("total_found") is not None:
+            result_ref["paper_count"] = search_result.get("total_found")
+
+    if state.workflow_name == "research_direction_generation" and state.data.get("saved_ids"):
+        result_ref["direction_ids"] = _summarize_value(state.data.get("saved_ids"))
+    if state.workflow_name == "project_design_generation" and state.data.get("saved_id"):
+        result_ref["design_id"] = state.data.get("saved_id")
+    if state.workflow_name == "html_deck_generation" and not result_ref.get("artifact_id") and result_ref.get("object_key"):
+        result_ref["artifact_id"] = result_ref["object_key"]
+    if "directions" in state.data:
+        result_ref["direction_count"] = len(state.data.get("directions") or [])
+    return result_ref
+
+
+def _build_workflow_diagnostics(
+    state: AgentWorkflowState,
+    *,
+    step_count: int,
+    step_status_counts: dict[str, int],
+) -> dict[str, Any]:
+    """生成内部诊断摘要，供排障和审计使用。"""
+    diagnostics = {
+        "node_count": step_count,
+        "step_statuses": dict(step_status_counts),
+        "warnings": _summarize_value(state.metadata.get("warnings", [])),
+        "artifacts": _summarize_value(state.metadata.get("artifacts", [])),
+        "recording_errors": _summarize_value(state.metadata.get("recording_errors", [])),
+    }
+    if "resolved_skills" in state.metadata:
+        diagnostics["resolved_skills"] = _summarize_value(state.metadata.get("resolved_skills"))
+    search_diagnostics = state.data.get("search_diagnostics")
+    if isinstance(search_diagnostics, dict):
+        diagnostics["failed_sources"] = _summarize_value(search_diagnostics.get("failed_sources", []))
+        diagnostics["source_overview"] = search_diagnostics.get("overview")
+    if state.errors:
+        diagnostics["errors"] = _summarize_value(state.errors)
+    return diagnostics
 
 
 def _summarize_value(value):

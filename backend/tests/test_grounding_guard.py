@@ -5,7 +5,6 @@ from app.agents.literature_review_agent import LiteratureReviewAgent
 from app.agents.research_direction_agent import ResearchDirectionAgent
 from app.services.grounding_guard import (
     sanitize_design_references,
-    sanitize_proposal_sections,
     validate_generated_chapter_grounding,
 )
 
@@ -16,8 +15,8 @@ class GroundingGuardTests(unittest.TestCase):
         agent.api_key = ""
 
         result = agent.analyze_papers(
-            papers=[{"title": "真实论文A", "authors": ["作者"], "year": 2024, "venue": "期刊", "abstract": "摘要"}],
-            research_requirement="测试课题",
+            papers=[{"title": "閻喎鐤勭拋鐑樻瀮A", "authors": ["娴ｆ粏鈧?], "year": 2024, "venue": "閺堢喎鍨?, "abstract": "閹芥顩?}],
+            research_requirement="濞村鐦拠楣冾暯",
         )
 
         self.assertEqual(result["analyzed_papers"], 0)
@@ -30,7 +29,7 @@ class GroundingGuardTests(unittest.TestCase):
 
         directions = agent.generate_directions(
             literature_analysis={"research_hotspots": [], "research_gaps": [], "recommended_entry_points": [], "summaries": []},
-            requirement="测试课题",
+            requirement="濞村鐦拠楣冾暯",
         )
         scores = agent.score_directions([])
 
@@ -40,47 +39,32 @@ class GroundingGuardTests(unittest.TestCase):
     def test_design_references_are_sanitized_to_allowed_titles(self):
         design = {
             "literature_review": {
-                "key_references": ["不存在的文献"],
+                "key_references": ["娑撳秴鐡ㄩ崷銊ф畱閺傚洨灏?],
             },
-            "references": ["完全虚构文献"],
+            "references": ["鐎瑰苯鍙忛搹姘€弬鍥╁盀"],
         }
         literature_analysis = {
             "summaries": [
-                {"title": "真实文献A", "year": 2024},
-                {"title": "真实文献B", "year": 2023},
+                {"title": "閻喎鐤勯弬鍥╁盀A", "year": 2024},
+                {"title": "閻喎鐤勯弬鍥╁盀B", "year": 2023},
             ]
         }
 
         sanitized = sanitize_design_references(design, literature_analysis)
 
-        self.assertEqual(sanitized["literature_review"]["key_references"], ["真实文献A", "真实文献B"])
-        self.assertEqual(sanitized["references"], ["真实文献A", "真实文献B"])
-
-    def test_proposal_reference_section_is_rebuilt_from_allowed_references(self):
-        sections = {
-            "references": {
-                "title": "十二、参考文献",
-                "content": "1. 完全虚构文献",
-            }
-        }
-
-        sanitized = sanitize_proposal_sections(sections, ["真实文献A", "真实文献B"])
-
-        content = sanitized["references"]["content"]
-        self.assertIn("真实文献A", content)
-        self.assertIn("真实文献B", content)
-        self.assertNotIn("完全虚构文献", content)
+        self.assertEqual(sanitized["literature_review"]["key_references"], ["閻喎鐤勯弬鍥╁盀A", "閻喎鐤勯弬鍥╁盀B"])
+        self.assertEqual(sanitized["references"], ["閻喎鐤勯弬鍥╁盀A", "閻喎鐤勯弬鍥╁盀B"])
 
     def test_generated_chapter_rejects_unknown_citations_and_unsupported_data_based(self):
         result = {
             "chapter_key": "chapter_5_experiment",
-            "title": "第五章 实验设计与结果分析",
-            "content": "正文",
-            "citations": ["虚构成果"],
+            "title": "缁楊兛绨茬粩?鐎圭偤鐛欑拋鎹愵吀娑撳海绮ㄩ弸婊冨瀻閺?,
+            "content": "濮濓絾鏋?,
+            "citations": ["閾忔碍鐎幋鎰亯"],
             "data_based": True,
         }
-        outcomes = [SimpleNamespace(name="真实成果", outcome_type="prototype")]
-        papers = [SimpleNamespace(title="真实论文A")]
+        outcomes = [SimpleNamespace(name="閻喎鐤勯幋鎰亯", outcome_type="prototype")]
+        papers = [SimpleNamespace(title="閻喎鐤勭拋鐑樻瀮A")]
 
         with self.assertRaises(ValueError):
             validate_generated_chapter_grounding(
@@ -93,16 +77,16 @@ class GroundingGuardTests(unittest.TestCase):
     def test_generated_chapter_allows_internal_evidence_card_citation(self):
         result = {
             "chapter_key": "chapter_1_introduction",
-            "title": "第一章 绪论",
-            "content": "已有内部证据卡片显示，AI 反馈帮助学生更快形成初稿并提升写作信心。",
-            "citations": ["写作信心提升"],
+            "title": "缁楊兛绔寸粩?缂侇亣顔?,
+            "content": "瀹稿弶婀侀崘鍛村劥鐠囦焦宓侀崡锛勫閺勫墽銇氶敍瀛塈 閸欏秹顩敮顔煎И鐎涳妇鏁撻弴鏉戞彥瑜般垺鍨氶崚婵堫焾楠炶埖褰侀崡鍥у晸娴ｆ粈淇婅箛鍐︹偓?,
+            "citations": ["閸愭瑤缍旀穱鈥崇妇閹绘劕宕?],
             "data_based": False,
         }
         evidence_items = [
             {
-                "title": "写作信心提升",
-                "evidence_text": "AI 反馈帮助学生更快形成初稿并提升写作信心。",
-                "source_title": "生成式人工智能支持研究生论文写作研究",
+                "title": "閸愭瑤缍旀穱鈥崇妇閹绘劕宕?,
+                "evidence_text": "AI 閸欏秹顩敮顔煎И鐎涳妇鏁撻弴鏉戞彥瑜般垺鍨氶崚婵堫焾楠炶埖褰侀崡鍥у晸娴ｆ粈淇婅箛鍐︹偓?,
+                "source_title": "閻㈢喐鍨氬蹇庢眽瀹搞儲娅ら懗鑺ユ暜閹镐胶鐖虹粚鍓佹晸鐠佺儤鏋冮崘娆庣稊閻梻鈹?,
             }
         ]
 
@@ -114,15 +98,15 @@ class GroundingGuardTests(unittest.TestCase):
             evidence_items=evidence_items,
         )
 
-        self.assertEqual(validated["citations"], ["写作信心提升"])
+        self.assertEqual(validated["citations"], ["閸愭瑤缍旀穱鈥崇妇閹绘劕宕?])
 
     def test_generated_chapter_allows_full_reference_string_when_title_matches(self):
         result = {
             "chapter_key": "chapter_1_introduction",
-            "title": "第一章 绪论",
-            "content": "正文",
+            "title": "缁楊兛绔寸粩?缂侇亣顔?,
+            "content": "濮濓絾鏋?,
             "citations": [
-                "Sébastien Bubeck, Varun Chandrasekaran, Ronen Eldan. Sparks of Artificial General Intelligence: Early experiments with GPT-4. arXiv (Cornell University), 2023",
+                "S鑼卋astien Bubeck, Varun Chandrasekaran, Ronen Eldan. Sparks of Artificial General Intelligence: Early experiments with GPT-4. arXiv (Cornell University), 2023",
             ],
             "data_based": False,
         }
@@ -149,8 +133,8 @@ class GroundingGuardTests(unittest.TestCase):
     def test_generated_chapter_rejects_unsupported_specific_percentages(self):
         result = {
             "chapter_key": "chapter_5_experiment",
-            "title": "第五章 实验设计与结果分析",
-            "content": "实验结果显示，系统使论文写作效率提升 92%，且满意度达到 96%。",
+            "title": "缁楊兛绨茬粩?鐎圭偤鐛欑拋鎹愵吀娑撳海绮ㄩ弸婊冨瀻閺?,
+            "content": "鐎圭偤鐛欑紒鎾寸亯閺勫墽銇氶敍宀€閮寸紒鐔跺▏鐠佺儤鏋冮崘娆庣稊閺佸牏宸奸幓鎰磳 92%閿涘奔绗栧鈩冨壈鎼达箒鎻崚?96%閵?,
             "citations": [],
             "data_based": False,
         }
@@ -167,8 +151,8 @@ class GroundingGuardTests(unittest.TestCase):
     def test_generated_chapter_does_not_treat_section_heading_as_person_count(self):
         result = {
             "chapter_key": "chapter_2_theory",
-            "title": "第二章 相关理论与技术基础",
-            "content": "2.1 人工智能基础\n本节介绍人工智能的定义、发展脉络与核心概念。",
+            "title": "缁楊兛绨╃粩?閻╃鍙ч悶鍡氼啈娑撳孩濡ч張顖氱唨绾偓",
+            "content": "2.1 娴滃搫浼愰弲楦垮厴閸╄櫣顢匼n閺堫剝濡禒瀣矝娴滃搫浼愰弲楦垮厴閻ㄥ嫬鐣炬稊澶堚偓浣稿絺鐏炴洝鍓︾紒婊€绗岄弽绋跨妇濮掑倸搴烽妴?,
             "citations": [],
             "data_based": False,
         }
@@ -183,25 +167,27 @@ class GroundingGuardTests(unittest.TestCase):
 
         self.assertEqual(validated["content"], result["content"])
 
-    def test_non_intro_chapter_citations_are_cleared(self):
+    def test_non_intro_chapter_supported_citations_are_preserved(self):
         result = {
             "chapter_key": "chapter_3_design",
-            "title": "第三章 系统需求分析与总体设计",
-            "content": "本章围绕系统需求与模块设计展开。",
-            "citations": ["真实论文A", "真实成果B"],
+            "title": "third chapter",
+            "content": "chapter content",
+            "citations": ["paper-a", "outcome-b"],
             "data_based": False,
         }
+
+        outcomes = [SimpleNamespace(name="outcome-b", outcome_type="prototype")]
+        papers = [SimpleNamespace(title="paper-a", abstract="" )]
 
         validated = validate_generated_chapter_grounding(
             chapter_key="chapter_3_design",
             result=result,
-            outcomes=[SimpleNamespace(name="真实成果B", outcome_type="prototype")],
-            papers=[SimpleNamespace(title="真实论文A", abstract="")],
+            outcomes=outcomes,
+            papers=papers,
             evidence_items=[],
         )
 
-        self.assertEqual(validated["citations"], [])
-
+        self.assertEqual(validated["citations"], [papers[0].title, outcomes[0].name])
 
 if __name__ == "__main__":
     unittest.main()

@@ -101,6 +101,11 @@ class ProjectDesignWorkflowTests(unittest.TestCase):
         self.assertEqual(len(db.steps), 2)
         self.assertEqual(db.runs[0].status, "success")
         self.assertEqual(db.runs[0].user_id, user_id)
+        self.assertEqual(db.steps[0].output_summary.get("action"), "generate_design")
+        self.assertEqual(db.steps[0].output_summary.get("resolved_skill_id"), "research.project_design_generate")
+        self.assertEqual(db.runs[0].output_snapshot.get("resolved_skills"), {
+            "generate_design": "research.project_design_generate",
+        })
 
     def test_project_design_workflow_does_not_save_empty_design(self):
         from app.agents.workflows.project_design_workflow import run_generate_project_design_workflow

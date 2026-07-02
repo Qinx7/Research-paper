@@ -1,13 +1,11 @@
-# 阶段 4：论文写作 Workflow 接入
+﻿# 闃舵 4锛氳鏂囧啓浣?Workflow 鎺ュ叆
 
-## 1. 目标
+## 1. 鐩爣
 
-把论文写作中的“证据收集 → 章节生成 → grounding 检查 → 保存草稿”整理成 workflow，降低生成内容无依据或凭空扩写的概率。
+鎶婅鏂囧啓浣滀腑鐨勨€滆瘉鎹敹闆?鈫?绔犺妭鐢熸垚 鈫?grounding 妫€鏌?鈫?淇濆瓨鑽夌鈥濇暣鐞嗘垚 workflow锛岄檷浣庣敓鎴愬唴瀹规棤渚濇嵁鎴栧嚟绌烘墿鍐欑殑姒傜巼銆?
+## 2. 浼樺厛鎺ュ叆绔犺妭鐢熸垚
 
-## 2. 优先接入章节生成
-
-章节生成比大纲和摘要更容易出现幻觉，因此优先迁移：
-
+绔犺妭鐢熸垚姣斿ぇ绾插拰鎽樿鏇村鏄撳嚭鐜板够瑙夛紝鍥犳浼樺厛杩佺Щ锛?
 ```mermaid
 flowchart LR
     A["Draft Context Node"] --> B["Evidence Collect Node"]
@@ -16,17 +14,9 @@ flowchart LR
     D --> E["Draft Save Node"]
 ```
 
-## 3. 节点职责
+## 3. 鑺傜偣鑱岃矗
 
-- `DraftContextNode`：读取草稿、大纲、项目设计、已有章节。
-- `EvidenceCollectNode`：读取项目文献、阅读笔记、上传资料 chunk、成果摘要。
-- `ChapterWriterNode`：调用现有 `paper_writing_agent.generate_chapter`。
-- `GroundingGuardNode`：调用现有 `validate_generated_chapter_grounding`。
-- `DraftSaveNode`：保存章节、更新版本。
+- `DraftContextNode`锛氳鍙栬崏绋裤€佸ぇ绾层€侀」鐩璁°€佸凡鏈夌珷鑺傘€?- `EvidenceCollectNode`锛氳鍙栭」鐩枃鐚€侀槄璇荤瑪璁般€佷笂浼犺祫鏂?chunk銆佹垚鏋滄憳瑕併€?- `ChapterWriterNode`锛氳皟鐢ㄧ幇鏈?`paper_writing_agent.generate_chapter`銆?- `GroundingGuardNode`锛氳皟鐢ㄧ幇鏈?`validate_generated_chapter_grounding`銆?- `DraftSaveNode`锛氫繚瀛樼珷鑺傘€佹洿鏂扮増鏈€?
+## 4. 楠屾敹鏍囧噯
 
-## 4. 验收标准
-
-- 章节生成仍保持原 API。
-- grounding 失败时能明确告诉用户缺少依据。
-- workflow 记录里能看到章节使用了哪些证据类型。
-- 不影响手动编辑保存。
+- 绔犺妭鐢熸垚浠嶄繚鎸佸師 API銆?- grounding 澶辫触鏃惰兘鏄庣‘鍛婅瘔鐢ㄦ埛缂哄皯渚濇嵁銆?- workflow 璁板綍閲岃兘鐪嬪埌绔犺妭浣跨敤浜嗗摢浜涜瘉鎹被鍨嬨€?- 涓嶅奖鍝嶆墜鍔ㄧ紪杈戜繚瀛樸€?

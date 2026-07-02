@@ -1,24 +1,23 @@
-# 阶段1-02：Auth 服务 + JWT 依赖注入
+﻿# 闃舵1-02锛欰uth 鏈嶅姟 + JWT 渚濊禆娉ㄥ叆
 
-## 2.1 Auth 服务
+## 2.1 Auth 鏈嶅姟
 
-新建 `backend/app/services/auth_service.py`：
-
+鏂板缓 `backend/app/services/auth_service.py`锛?
 ```python
 def hash_password(password: str) -> str:
-    """使用 bcrypt 哈希密码"""
+    """浣跨敤 bcrypt 鍝堝笇瀵嗙爜"""
     from passlib.context import CryptContext
     pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
     return pwd_context.hash(password)
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
-    """验证密码"""
+    """楠岃瘉瀵嗙爜"""
     from passlib.context import CryptContext
     pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
     return pwd_context.verify(plain_password, hashed_password)
 
 def create_access_token(user_id: str, email: str) -> str:
-    """生成 JWT access token"""
+    """鐢熸垚 JWT access token"""
     from datetime import datetime, timedelta
     from jose import jwt
     from ..core.config import settings
@@ -33,23 +32,21 @@ def create_access_token(user_id: str, email: str) -> str:
     return jwt.encode(payload, settings.JWT_SECRET_KEY, algorithm=settings.JWT_ALGORITHM)
 
 def register_user(db, email: str, username: str, password: str) -> User:
-    """注册新用户：校验唯一性 → 哈希密码 → 写 DB"""
-    # 检查 email/username 是否已被使用
-    # 哈希密码
-    # 创建 User 记录
-    # 返回 User 对象
+    """娉ㄥ唽鏂扮敤鎴凤細鏍￠獙鍞竴鎬?鈫?鍝堝笇瀵嗙爜 鈫?鍐?DB"""
+    # 妫€鏌?email/username 鏄惁宸茶浣跨敤
+    # 鍝堝笇瀵嗙爜
+    # 鍒涘缓 User 璁板綍
+    # 杩斿洖 User 瀵硅薄
 
 def authenticate_user(db, email: str, password: str) -> User | None:
-    """验证登录凭据"""
-    # 查 email
-    # 验密码
-    # 返回 User 或 None
+    """楠岃瘉鐧诲綍鍑嵁"""
+    # 鏌?email
+    # 楠屽瘑鐮?    # 杩斿洖 User 鎴?None
 ```
 
-## 2.2 JWT 依赖注入
+## 2.2 JWT 渚濊禆娉ㄥ叆
 
-新建 `backend/app/services/auth_dependency.py`：
-
+鏂板缓 `backend/app/services/auth_dependency.py`锛?
 ```python
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
@@ -62,35 +59,32 @@ def get_current_user(
     credentials: HTTPAuthorizationCredentials = Depends(security_scheme),
     db: Session = Depends(get_db),
 ) -> User:
-    """从 Authorization: Bearer <token> 解析当前用户。
-    作为 FastAPI 依赖注入，任何受保护的路由添加此依赖即可。
-    """
+    """浠?Authorization: Bearer <token> 瑙ｆ瀽褰撳墠鐢ㄦ埛銆?    浣滀负 FastAPI 渚濊禆娉ㄥ叆锛屼换浣曞彈淇濇姢鐨勮矾鐢辨坊鍔犳渚濊禆鍗冲彲銆?    """
     token = credentials.credentials
     try:
         payload = jwt.decode(token, settings.JWT_SECRET_KEY, algorithms=[settings.JWT_ALGORITHM])
         user_id = payload.get("sub")
         if not user_id:
-            raise HTTPException(status_code=401, detail="无效的认证令牌")
+            raise HTTPException(status_code=401, detail="鏃犳晥鐨勮璇佷护鐗?)
     except JWTError:
-        raise HTTPException(status_code=401, detail="认证令牌解析失败")
+        raise HTTPException(status_code=401, detail="璁よ瘉浠ょ墝瑙ｆ瀽澶辫触")
 
     user = db.query(User).filter(User.id == user_id).first()
     if not user or not user.is_active:
-        raise HTTPException(status_code=401, detail="用户不存在或已禁用")
+        raise HTTPException(status_code=401, detail="鐢ㄦ埛涓嶅瓨鍦ㄦ垨宸茬鐢?)
 
     return user
 
-# 可选依赖：允许未登录访问，但解析用户信息（用于公开数据标记）
-def get_optional_user(...) -> User | None:
-    """与 get_current_user 相同，但无 Token 时返回 None 而非 401"""
+# 鍙€変緷璧栵細鍏佽鏈櫥褰曡闂紝浣嗚В鏋愮敤鎴蜂俊鎭紙鐢ㄤ簬鍏紑鏁版嵁鏍囪锛?def get_optional_user(...) -> User | None:
+    """涓?get_current_user 鐩稿悓锛屼絾鏃?Token 鏃惰繑鍥?None 鑰岄潪 401"""
 ```
 
-## 2.3 验证
+## 2.3 楠岃瘉
 
 ```python
-# 测试密码哈希
+# 娴嬭瘯瀵嗙爜鍝堝笇
 assert verify_password("test123", hash_password("test123")) is True
-# 测试 JWT 往返
-token = create_access_token("uuid", "test@test.com")
-# decode 成功
+# 娴嬭瘯 JWT 寰€杩?token = create_access_token("uuid", "test@test.com")
+# decode 鎴愬姛
 ```
+

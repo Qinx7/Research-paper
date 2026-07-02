@@ -64,6 +64,7 @@ export interface ProjectWorkspaceOutcome {
   chunk_count: number;
   download_url: string | null;
   cited_by_chapters: string[];
+  extra_data?: OutcomeKnowledgeExtra | null;
 }
 
 export interface ProjectWorkspaceChapter {
@@ -96,16 +97,7 @@ export interface ProjectWorkspaceDeliveryDraft {
   action_label: string;
 }
 
-export interface ProjectWorkspaceDeliveryProposal {
-  id: string;
-  title: string;
-  download_docx_url: string;
-  download_pdf_url: string;
-  action_url: string;
-  action_label: string;
-}
-
-export interface ProjectWorkspaceDeliveryDefense {
+export interface ProjectWorkspaceDeliveryPresentation {
   ready: boolean;
   has_real_data: boolean;
   draft_id: string | null;
@@ -126,8 +118,7 @@ export interface ProjectWorkspaceSnapshot {
   chapters: ProjectWorkspaceChapter[];
   delivery: {
     latest_draft: ProjectWorkspaceDeliveryDraft | null;
-    latest_proposal: ProjectWorkspaceDeliveryProposal | null;
-    defense: ProjectWorkspaceDeliveryDefense;
+    presentation: ProjectWorkspaceDeliveryPresentation;
   };
 }
 
@@ -143,6 +134,7 @@ export interface ProjectDocumentSearchResult {
   content_excerpt: string;
   download_url: string;
   score: number;
+  semantic_score?: number;
   score_reasons: string[];
   action_label: string;
   action_url: string;
@@ -508,24 +500,6 @@ export interface HtmlDeckArtifact {
   download_url: string;
 }
 
-// ========== 开题报告 ==========
-
-export interface ProposalSection {
-  key: string;
-  title: string;
-  content: string;
-}
-
-export interface ProposalOut {
-  id: string;
-  project_id: string | null;
-  design_id: string | null;
-  title: string;
-  sections: ProposalSection[];
-  docx_path: string | null;
-  created_at: string;
-}
-
 // ========== 聊天 ==========
 
 export interface ChatMessage {
@@ -585,6 +559,8 @@ export interface OutcomeKnowledgeExtra {
   knowledge_strategy_chain?: string[];
   knowledge_used_ocr?: boolean;
   knowledge_error_stage?: string | null;
+  knowledge_vector_status?: "not_started" | "indexed" | "partial" | "unavailable" | string;
+  knowledge_vector_count?: number;
   document_kind?: string | null;
   structured_fields?: string[];
   structured_content?: {
@@ -611,6 +587,12 @@ export interface OutcomeKnowledgeStatus {
   strategy_chain?: string[];
   used_ocr?: boolean;
   error_stage?: string | null;
+  document_kind?: string | null;
+  structured_fields?: string[];
+  structured_confidence?: Record<string, unknown>;
+  vector_status: string;
+  vector_count: number;
+  vector_message: string;
 }
 
 export interface SourceStatusInfo {
@@ -710,6 +692,55 @@ export interface DraftOutline {
   notes: string | null;
 }
 
+export interface WritingPlanResult {
+  goal: string;
+  recommended_structure: string[];
+  evidence_gaps: string[];
+  risks: string[];
+  notes: string;
+}
+
+export interface WritingReviewIssue {
+  severity: string;
+  title: string;
+  detail: string;
+  suggestion: string;
+}
+
+export interface WritingReviewResult {
+  chapter_key: string;
+  passed: boolean;
+  summary: string;
+  issues: WritingReviewIssue[];
+  focus_areas: string[];
+}
+
+export interface WritingRevisionResult {
+  chapter_key: string;
+  title: string;
+  content: string;
+  change_summary: string[];
+  resolved_issues: string[];
+  citations: string[];
+  data_based: boolean;
+}
+
+export interface FullDraftReviewResult {
+  passed: boolean;
+  summary: string;
+  issues: WritingReviewIssue[];
+  focus_areas: string[];
+  chapter_flags: Record<string, string[]>;
+}
+
+export interface FullDraftRevisionResult {
+  title: string;
+  full_text: string;
+  change_summary: string[];
+  resolved_issues: string[];
+  remaining_issues: string[];
+}
+
 export interface PaperSection {
   key: string;
   title: string;
@@ -721,7 +752,7 @@ export interface Draft {
   id: string;
   project_id: string;
   title: string;
-  content: Record<string, { title: string; content: string; status: string; data_based?: boolean; citations?: string[] }> | null;
+  content: Record<string, { title: string; content: string; status: string; data_based?: boolean; citations?: string[] } | unknown> | null;
   references: Record<string, unknown>[] | null;
   outline: DraftOutline | null;
   version: number;
@@ -744,36 +775,6 @@ export interface AbstractResult {
   abstract_en: string;
   keywords_cn: string[];
   keywords_en: string[];
-}
-
-// ========== 已停用：答辩 PPT（后端能力保留，当前前端主链路不使用） ==========
-
-export interface DefenseSlideInfo {
-  page: number;
-  title: string;
-  content_type: string;
-  description: string;
-}
-
-export interface DefensePPTOutline {
-  slides: DefenseSlideInfo[];
-  total_slides: number;
-  has_real_data: boolean;
-}
-
-export interface DefensePPTResponse {
-  success: boolean;
-  filename: string | null;
-  download_url: string | null;
-  style_id: string | null;
-  style_name: string | null;
-  slide_count: number;
-  has_real_data: boolean;
-}
-
-export interface DefenseScript {
-  slides: { page: number; title: string; notes: string; duration_seconds: number }[];
-  total_duration_minutes: number;
 }
 
 // ========== 学术合规检查 ==========
@@ -917,9 +918,17 @@ export interface AgentWorkflowStep {
   id: string;
   run_id: string;
   node_name: string;
+  node_type?: string | null;
+  node_label?: string | null;
   status: string;
+  critical?: boolean | null;
+  visible?: boolean | null;
+  skill_id?: string | null;
+  skill_version?: string | null;
   input_summary: Record<string, unknown> | null;
   output_summary: Record<string, unknown> | null;
+  warnings?: unknown[] | null;
+  artifacts?: Record<string, unknown>[] | null;
   error_message: string | null;
   duration_ms: number;
   started_at: string | null;
@@ -935,8 +944,14 @@ export interface AgentWorkflowRun {
   user_id: string | null;
   project_id: string | null;
   search_task_id: string | null;
+  workflow_version?: string | null;
+  trigger_source?: string | null;
+  visibility?: string | null;
+  input_hash?: string | null;
   input_snapshot: Record<string, unknown> | null;
   output_snapshot: Record<string, unknown> | null;
+  result_ref?: Record<string, unknown> | null;
+  diagnostics?: Record<string, unknown> | null;
   error_message: string | null;
   started_at: string | null;
   finished_at: string | null;

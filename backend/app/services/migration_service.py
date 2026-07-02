@@ -22,6 +22,7 @@ def apply_runtime_schema_bootstrap(
     ensure_research_direction_content_column: Callable[[Any], None],
     ensure_project_design_content_column: Callable[[Any], None],
     ensure_document_vectors_table: Callable[[Any], Any],
+    ensure_project_document_vectors_table: Callable[[Any], Any],
 ) -> None:
     """执行当前过渡期的运行时 schema 引导。"""
     try:
@@ -36,6 +37,7 @@ def apply_runtime_schema_bootstrap(
         ensure_research_direction_content_column(db)
         ensure_project_design_content_column(db)
         ensure_document_vectors_table(db)
+        ensure_project_document_vectors_table(db)
     except Exception as exc:
         logger.warning("初始化向量存储失败: %s", exc)
     finally:

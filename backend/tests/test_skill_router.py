@@ -5,9 +5,17 @@ from app.skills.registry import build_default_skill_registry
 
 
 class SkillRouterTests(unittest.TestCase):
-    def test_router_resolves_default_paper_and_ppt_actions(self):
+    def test_router_resolves_default_paper_research_and_ppt_actions(self):
         router = SkillRouter(build_default_skill_registry())
 
+        self.assertEqual(
+            router.resolve_id(domain="paper", action="plan"),
+            "paper.plan",
+        )
+        self.assertEqual(
+            router.resolve_id(domain="paper", action="generate_outline"),
+            "paper.outline_generate",
+        )
         self.assertEqual(
             router.resolve_id(domain="paper", action="write_chapter"),
             "paper.chapter_draft",
@@ -15,6 +23,26 @@ class SkillRouterTests(unittest.TestCase):
         self.assertEqual(
             router.resolve_id(domain="paper", action="validate_chapter"),
             "paper.chapter_grounding",
+        )
+        self.assertEqual(
+            router.resolve_id(domain="paper", action="review_full"),
+            "paper.full_review_pass",
+        )
+        self.assertEqual(
+            router.resolve_id(domain="paper", action="revise_full"),
+            "paper.full_revision_apply",
+        )
+        self.assertEqual(
+            router.resolve_id(domain="research", action="generate_directions"),
+            "research.direction_generate",
+        )
+        self.assertEqual(
+            router.resolve_id(domain="research", action="score_directions"),
+            "research.direction_score",
+        )
+        self.assertEqual(
+            router.resolve_id(domain="research", action="generate_design"),
+            "research.project_design_generate",
         )
         self.assertEqual(
             router.resolve_id(domain="ppt", action="preview_html_deck"),

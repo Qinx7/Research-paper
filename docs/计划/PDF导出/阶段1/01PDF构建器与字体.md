@@ -1,58 +1,53 @@
-# 阶段 1 · PDF 构建器与字体管理
+﻿# 闃舵 1 路 PDF 鏋勫缓鍣ㄤ笌瀛椾綋绠＄悊
 
-## 目标
+## 鐩爣
 
-安装 fpdf2，创建通用 PDF 构建服务模块，解决中文字体问题。
+瀹夎 fpdf2锛屽垱寤洪€氱敤 PDF 鏋勫缓鏈嶅姟妯″潡锛岃В鍐充腑鏂囧瓧浣撻棶棰樸€?
+## 姝ラ
 
-## 步骤
-
-### 1.1 安装 fpdf2
+### 1.1 瀹夎 fpdf2
 
 ```bash
 pip install fpdf2
 ```
 
-`requirements.txt` 追加一行 `fpdf2`（版本不锁定，让 pip 解析兼容版本）。
+`requirements.txt` 杩藉姞涓€琛?`fpdf2`锛堢増鏈笉閿佸畾锛岃 pip 瑙ｆ瀽鍏煎鐗堟湰锛夈€?
+### 1.2 鏂板缓 `backend/app/services/pdf_builder.py`
 
-### 1.2 新建 `backend/app/services/pdf_builder.py`
+#### 璁捐鍘熷垯
 
-#### 设计原则
-
-- 类 `PdfBuilder` 封装 fpdf2 的 FPDF 实例
-- 提供论文/报告场景的预设布局方法（封面标题、一级标题、正文段落、页码）
-- 与 `_build_docx()` 调用风格一致，替换成本低
-
-#### 核心 API
+- 绫?`PdfBuilder` 灏佽 fpdf2 鐨?FPDF 瀹炰緥
+- 鎻愪緵璁烘枃/鎶ュ憡鍦烘櫙鐨勯璁惧竷灞€鏂规硶锛堝皝闈㈡爣棰樸€佷竴绾ф爣棰樸€佹鏂囨钀姐€侀〉鐮侊級
+- 涓?`_build_docx()` 璋冪敤椋庢牸涓€鑷达紝鏇挎崲鎴愭湰浣?
+#### 鏍稿績 API
 
 ```python
 class PdfBuilder:
-    """通用 PDF 构建器。封装 fpdf2，提供学术论文/报告排版方法。"""
+    """閫氱敤 PDF 鏋勫缓鍣ㄣ€傚皝瑁?fpdf2锛屾彁渚涘鏈鏂?鎶ュ憡鎺掔増鏂规硶銆?""
 
     def __init__(self, title: str):
-        # A4 纸，自动分页，注册中文字体
-        ...
+        # A4 绾革紝鑷姩鍒嗛〉锛屾敞鍐屼腑鏂囧瓧浣?        ...
 
     def add_heading(self, text: str, level: int = 1) -> None:
-        """一级/二级标题。level=1 黑体 16pt，level=2 黑体 13pt"""
+        """涓€绾?浜岀骇鏍囬銆俵evel=1 榛戜綋 16pt锛宭evel=2 榛戜綋 13pt"""
         ...
 
     def add_body(self, text: str) -> None:
-        """正文段落。宋体 12pt，首行缩进 2 字符，1.5 倍行距"""
+        """姝ｆ枃娈佃惤銆傚畫浣?12pt锛岄琛岀缉杩?2 瀛楃锛?.5 鍊嶈璺?""
         ...
 
     def add_page_number(self) -> None:
-        """页脚居中页码"""
+        """椤佃剼灞呬腑椤电爜"""
         ...
 
     def output(self) -> bytes:
-        """返回 PDF 字节"""
+        """杩斿洖 PDF 瀛楄妭"""
         ...
 ```
 
-#### 字体管理（模块级辅助函数）
-
+#### 瀛椾綋绠＄悊锛堟ā鍧楃骇杈呭姪鍑芥暟锛?
 ```python
-# 优先级从高到低的字体搜索路径
+# 浼樺厛绾т粠楂樺埌浣庣殑瀛椾綋鎼滅储璺緞
 _FONT_SEARCH_PATHS_WIN = [
     "C:/Windows/Fonts/simsun.ttc",
     "C:/Windows/Fonts/simhei.ttf",
@@ -67,47 +62,42 @@ _FONT_SEARCH_PATHS_LINUX = [
 _FONT_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "storage", "fonts")
 
 def _find_system_cjk_font() -> str | None:
-    """按平台检测可用的 CJK 字体，返回第一个存在的 ttf/ttc 路径。"""
+    """鎸夊钩鍙版娴嬪彲鐢ㄧ殑 CJK 瀛椾綋锛岃繑鍥炵涓€涓瓨鍦ㄧ殑 ttf/ttc 璺緞銆?""
     ...
 
 def _ensure_cjk_font() -> str:
     """
-    确保有 CJK 字体可用：
-    1. 检查系统字体 → 找到即返回
-    2. 检查 storage/fonts/ 是否有已下载的字体 → 有则返回
-    3. 自动下载 Noto Sans SC Regular 到 storage/fonts/ → 返回路径
+    纭繚鏈?CJK 瀛椾綋鍙敤锛?    1. 妫€鏌ョ郴缁熷瓧浣?鈫?鎵惧埌鍗宠繑鍥?    2. 妫€鏌?storage/fonts/ 鏄惁鏈夊凡涓嬭浇鐨勫瓧浣?鈫?鏈夊垯杩斿洖
+    3. 鑷姩涓嬭浇 Noto Sans SC Regular 鍒?storage/fonts/ 鈫?杩斿洖璺緞
     """
     ...
 ```
 
-#### 字体自动下载
+#### 瀛椾綋鑷姩涓嬭浇
 
-若系统无 CJK 字体，从 Google Fonts 下载 Noto Sans SC（SIL Open Font License，可自由分发）：
+鑻ョ郴缁熸棤 CJK 瀛椾綋锛屼粠 Google Fonts 涓嬭浇 Noto Sans SC锛圫IL Open Font License锛屽彲鑷敱鍒嗗彂锛夛細
 
-- URL：`https://github.com/google/fonts/raw/main/ofl/notosanssc/NotoSansSC%5Bwght%5D.ttf`
-- 保存到 `storage/fonts/NotoSansSC-Regular.ttf`
-- 一次性操作，约 10MB，后续直接读取本地文件
-- 使用 httpx 下载，复用项目现有的 httpx 依赖
+- URL锛歚https://github.com/google/fonts/raw/main/ofl/notosanssc/NotoSansSC%5Bwght%5D.ttf`
+- 淇濆瓨鍒?`storage/fonts/NotoSansSC-Regular.ttf`
+- 涓€娆℃€ф搷浣滐紝绾?10MB锛屽悗缁洿鎺ヨ鍙栨湰鍦版枃浠?- 浣跨敤 httpx 涓嬭浇锛屽鐢ㄩ」鐩幇鏈夌殑 httpx 渚濊禆
 
-### 1.3 验证
+### 1.3 楠岃瘉
 
-在 Python 交互环境中测试：
+鍦?Python 浜や簰鐜涓祴璇曪細
 
 ```python
 from app.services.pdf_builder import PdfBuilder
 
-b = PdfBuilder("测试论文标题")
-b.add_heading("第一章 绪论", level=1)
-b.add_body("这是一段中文测试正文，用于验证中文字体渲染是否正常。")
-b.add_heading("1.1 研究背景", level=2)
-b.add_body("首行缩进 2 字符，1.5 倍行距。包含中文标点：，。；：""！")
+b = PdfBuilder("娴嬭瘯璁烘枃鏍囬")
+b.add_heading("绗竴绔?缁", level=1)
+b.add_body("杩欐槸涓€娈典腑鏂囨祴璇曟鏂囷紝鐢ㄤ簬楠岃瘉涓枃瀛椾綋娓叉煋鏄惁姝ｅ父銆?)
+b.add_heading("1.1 鐮旂┒鑳屾櫙", level=2)
+b.add_body("棣栬缂╄繘 2 瀛楃锛?.5 鍊嶈璺濄€傚寘鍚腑鏂囨爣鐐癸細锛屻€傦紱锛?"锛?)
 pdf_bytes = b.output()
 with open("test_output.pdf", "wb") as f:
     f.write(pdf_bytes)
 ```
 
-检查点：
-- PDF 文件可正常打开
-- 中文无乱码，无豆腐块
-- 首行缩进、行距符合预期
-- A4 纸尺寸正确
+妫€鏌ョ偣锛?- PDF 鏂囦欢鍙甯告墦寮€
+- 涓枃鏃犱贡鐮侊紝鏃犺眴鑵愬潡
+- 棣栬缂╄繘銆佽璺濈鍚堥鏈?- A4 绾稿昂瀵告纭?

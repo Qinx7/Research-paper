@@ -4,6 +4,7 @@ import React, { useState, useEffect, useCallback, useRef } from "react";
 import * as api from "../lib/api";
 import type { Outcome, OutcomeTypeInfo, OutcomeSummary, ReadinessCheck } from "../lib/types";
 import { buildOutcomeStructuredPreview } from "../lib/outcomeStructuredPreview.mjs";
+import { buildOutcomeKnowledgeDetails } from "../lib/outcomeKnowledgeSummary.mjs";
 
 interface Props {
   projectId: string;
@@ -34,7 +35,6 @@ export default function OutcomeManager({ projectId, onReadyChange }: Props) {
   const [error, setError] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
-  // 上传表单
   const [file, setFile] = useState<File | null>(null);
   const [outcomeType, setOutcomeType] = useState("other");
   const [name, setName] = useState("");
@@ -55,7 +55,9 @@ export default function OutcomeManager({ projectId, onReadyChange }: Props) {
     try {
       const data = await api.listOutcomeTypes();
       setTypes(data);
-    } catch { /* 使用默认类型 */ }
+    } catch {
+      /* 使用默认类型 */
+    }
   }, []);
 
   useEffect(() => {
@@ -156,7 +158,6 @@ export default function OutcomeManager({ projectId, onReadyChange }: Props) {
 
   return (
     <div className="space-y-6">
-      {/* 错误提示 */}
       {error && (
         <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg text-sm">
           {error}
@@ -164,11 +165,10 @@ export default function OutcomeManager({ projectId, onReadyChange }: Props) {
         </div>
       )}
 
-      {/* 上传区 */}
       <div className="bg-white border border-gray-200 rounded-xl p-5">
         <h3 className="font-semibold text-gray-800 mb-4">上传项目成果</h3>
         <p className="mb-4 text-xs text-gray-500">
-          支持将 TXT / MD / DOCX / 文本型 PDF 解析入项目知识库；扫描版 PDF 暂不支持 OCR。
+          支持将 TXT / MD / DOCX / PDF 解析入项目知识库；扫描版 PDF 在检测到无文本时会自动进入 OCR 补充识别。
         </p>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div>
@@ -229,7 +229,6 @@ export default function OutcomeManager({ projectId, onReadyChange }: Props) {
         </button>
       </div>
 
-      {/* 分析和就绪检查 */}
       <div className="flex gap-3">
         <button
           onClick={handleSummarize}
@@ -247,11 +246,10 @@ export default function OutcomeManager({ projectId, onReadyChange }: Props) {
         </button>
       </div>
 
-      {/* 就绪状态 */}
       {readiness && (
         <div className={`border rounded-xl p-4 ${readiness.ready ? "bg-green-50 border-green-200" : "bg-yellow-50 border-yellow-200"}`}>
           <div className="flex items-center gap-2 mb-2">
-            <span className={`text-lg ${readiness.ready ? "" : ""}`}>
+            <span className="text-lg">
               {readiness.ready ? "已就绪" : "尚不充分"}
             </span>
             <span className="text-sm text-gray-500">完备度 {readiness.score}/100</span>
@@ -263,7 +261,6 @@ export default function OutcomeManager({ projectId, onReadyChange }: Props) {
         </div>
       )}
 
-      {/* AI 汇总 */}
       {summary && (
         <div className="bg-blue-50 border border-blue-200 rounded-xl p-4">
           <h4 className="font-semibold text-blue-900 mb-2">AI 成果汇总</h4>
@@ -277,7 +274,6 @@ export default function OutcomeManager({ projectId, onReadyChange }: Props) {
         </div>
       )}
 
-      {/* 成果列表 */}
       <div>
         <h3 className="font-semibold text-gray-800 mb-3">
           已上传成果（{outcomes.length}）
@@ -286,114 +282,108 @@ export default function OutcomeManager({ projectId, onReadyChange }: Props) {
           <p className="text-gray-400 text-sm py-4 text-center">暂未上传成果，请先上传文件。</p>
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-            {outcomes.map((o) => (
-              <div key={o.id} className="bg-white border border-gray-200 rounded-lg p-4 flex items-start justify-between">
-                <div className="flex-1 min-w-0">
-                  {(() => {
-                    const structuredPreview = buildOutcomeStructuredPreview(o);
-                    return (
-                      <>
-                  <div className="flex items-center gap-2 mb-1">
-                    <span className="text-xs px-2 py-0.5 rounded-full bg-gray-100 text-gray-600">
-                      {OUTCOME_TYPE_LABELS[o.outcome_type] || o.outcome_type}
-                    </span>
-                    <KnowledgeStatusBadge outcome={o} indexing={indexingIds.has(o.id)} />
-                  </div>
-                  <p className="font-medium text-gray-800 text-sm truncate">{o.name}</p>
-                  {o.description && (
-                    <p className="text-xs text-gray-500 mt-1 truncate">{o.description}</p>
-                  )}
-                  {o.extra_data?.knowledge_error && (
-                    <p className="mt-2 text-xs text-red-500 line-clamp-2">{o.extra_data.knowledge_error}</p>
-                  )}
-                  {(o.extra_data?.knowledge_parser || o.extra_data?.knowledge_strategy_chain?.length || o.extra_data?.knowledge_error_stage) && (
-                    <div className="mt-2 space-y-1 text-[11px] text-gray-500">
-                      {o.extra_data?.knowledge_parser && (
-                        <div>解析路径：{o.extra_data.knowledge_parser}</div>
-                      )}
-                      {o.extra_data?.knowledge_strategy_chain?.length ? (
-                        <div>策略链：{o.extra_data.knowledge_strategy_chain.join(" → ")}</div>
-                      ) : null}
-                      {typeof o.extra_data?.knowledge_used_ocr === "boolean" ? (
-                        <div>OCR：{o.extra_data.knowledge_used_ocr ? "已进入 OCR" : "未进入 OCR"}</div>
-                      ) : null}
-                      {o.extra_data?.knowledge_error_stage ? (
-                        <div>失败阶段：{o.extra_data.knowledge_error_stage}</div>
-                      ) : null}
+            {outcomes.map((o) => {
+              const structuredPreview = buildOutcomeStructuredPreview(o);
+              const knowledgeDetails = buildOutcomeKnowledgeDetails(o.extra_data);
+              const vectorSummary = buildVectorKnowledgeSummary(o);
+              return (
+                <div key={o.id} className="bg-white border border-gray-200 rounded-lg p-4 flex items-start justify-between">
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 mb-1">
+                      <span className="text-xs px-2 py-0.5 rounded-full bg-gray-100 text-gray-600">
+                        {OUTCOME_TYPE_LABELS[o.outcome_type] || o.outcome_type}
+                      </span>
+                      <KnowledgeStatusBadge outcome={o} indexing={indexingIds.has(o.id)} />
                     </div>
-                  )}
-                  {structuredPreview.visible && (
-                    <div className="mt-3 rounded-lg border border-blue-100 bg-blue-50/60 p-3">
-                      <div className="mb-2 text-[11px] font-medium text-blue-900">论文型 PDF 自动抽取结果</div>
-                      {structuredPreview.title ? (
-                        <div className="mb-2 text-[12px] text-blue-900">
-                          <span className="font-medium">标题：</span>
-                          {structuredPreview.title}
-                        </div>
-                      ) : null}
-                      {structuredPreview.abstract ? (
-                        <div className="mb-2 text-[12px] leading-5 text-blue-800">
-                          <span className="font-medium">摘要预览：</span>
-                          {structuredPreview.abstract}
-                        </div>
-                      ) : null}
-                      <div className="flex flex-wrap gap-2 text-[11px] text-blue-800">
-                        <span className="rounded-full border border-blue-200 bg-white px-2 py-0.5">
-                          标题置信度：{structuredPreview.confidence.title}
-                        </span>
-                        <span className="rounded-full border border-blue-200 bg-white px-2 py-0.5">
-                          摘要置信度：{structuredPreview.confidence.abstract}
-                        </span>
-                        <span className="rounded-full border border-blue-200 bg-white px-2 py-0.5">
-                          参考文献区：{structuredPreview.referencesDetected ? `已识别（${structuredPreview.confidence.references}）` : "未识别"}
-                        </span>
+                    <p className="font-medium text-gray-800 text-sm truncate">{o.name}</p>
+                    {o.description && (
+                      <p className="text-xs text-gray-500 mt-1 truncate">{o.description}</p>
+                    )}
+                    {o.extra_data?.knowledge_error && (
+                      <p className="mt-2 text-xs text-red-500 line-clamp-2">{o.extra_data.knowledge_error}</p>
+                    )}
+                    {knowledgeDetails.length > 0 && (
+                      <div className="mt-2 space-y-1 text-[11px] text-gray-500">
+                        {knowledgeDetails.map((line) => (
+                          <div key={line}>{line}</div>
+                        ))}
                       </div>
-                      {structuredPreview.referencesList.length > 0 && (
-                        <div className="mt-2 space-y-1 text-[11px] leading-5 text-blue-800">
-                          <div className="font-medium">参考文献预览：</div>
-                          {structuredPreview.referencesList.map((item: string, index: number) => (
-                            <div key={`${o.id}-ref-${index}`} className="line-clamp-2">
-                              {item}
-                            </div>
-                          ))}
+                    )}
+                    {vectorSummary && (
+                      <div className={`mt-2 rounded-lg border px-2.5 py-2 text-[11px] ${vectorSummary.className}`}>
+                        {vectorSummary.label}
+                      </div>
+                    )}
+                    {structuredPreview.visible && (
+                      <div className="mt-3 rounded-lg border border-blue-100 bg-blue-50/60 p-3">
+                        <div className="mb-2 text-[11px] font-medium text-blue-900">论文型 PDF 自动抽取结果</div>
+                        {structuredPreview.title ? (
+                          <div className="mb-2 text-[12px] text-blue-900">
+                            <span className="font-medium">标题：</span>
+                            {structuredPreview.title}
+                          </div>
+                        ) : null}
+                        {structuredPreview.abstract ? (
+                          <div className="mb-2 text-[12px] leading-5 text-blue-800">
+                            <span className="font-medium">摘要预览：</span>
+                            {structuredPreview.abstract}
+                          </div>
+                        ) : null}
+                        <div className="flex flex-wrap gap-2 text-[11px] text-blue-800">
+                          <span className="rounded-full border border-blue-200 bg-white px-2 py-0.5">
+                            标题置信度：{structuredPreview.confidence.title}
+                          </span>
+                          <span className="rounded-full border border-blue-200 bg-white px-2 py-0.5">
+                            摘要置信度：{structuredPreview.confidence.abstract}
+                          </span>
+                          <span className="rounded-full border border-blue-200 bg-white px-2 py-0.5">
+                            参考文献区：{structuredPreview.referencesDetected ? `已识别（${structuredPreview.confidence.references}）` : "未识别"}
+                          </span>
                         </div>
-                      )}
-                      <p className="mt-2 text-[11px] leading-5 text-blue-700">
-                        该结果来自自动规则抽取，后续如需更高精度可升级学术论文结构解析服务。
-                      </p>
-                    </div>
-                  )}
-                      </>
-                    );
-                  })()}
-                </div>
-                <div className="flex gap-2 ml-3 shrink-0">
-                  {isKnowledgeParsable(o) && (
+                        {structuredPreview.referencesList.length > 0 && (
+                          <div className="mt-2 space-y-1 text-[11px] leading-5 text-blue-800">
+                            <div className="font-medium">参考文献预览：</div>
+                            {structuredPreview.referencesList.map((item: string, index: number) => (
+                              <div key={`${o.id}-ref-${index}`} className="line-clamp-2">
+                                {item}
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                        <p className="mt-2 text-[11px] leading-5 text-blue-700">
+                          该结果来自当前结构化解析链，已结合文本提取、版面补充和必要时的 OCR 路径；如需更高精度，后续可继续接入更强的学术论文结构解析服务。
+                        </p>
+                      </div>
+                    )}
+                  </div>
+                  <div className="flex gap-2 ml-3 shrink-0">
+                    {isKnowledgeParsable(o) && (
+                      <button
+                        onClick={() => handleIndexKnowledge(o)}
+                        disabled={indexingIds.has(o.id)}
+                        className="text-xs text-emerald-600 hover:underline disabled:opacity-50"
+                      >
+                        {knowledgeActionLabel(o, indexingIds.has(o.id))}
+                      </button>
+                    )}
+                    {o.file_url && (
+                      <button
+                        onClick={() => handleDownload(o)}
+                        className="text-xs text-blue-600 hover:underline"
+                      >
+                        下载
+                      </button>
+                    )}
                     <button
-                      onClick={() => handleIndexKnowledge(o)}
-                      disabled={indexingIds.has(o.id)}
-                      className="text-xs text-emerald-600 hover:underline disabled:opacity-50"
+                      onClick={() => handleDelete(o.id)}
+                      className="text-xs text-red-500 hover:underline"
                     >
-                      {knowledgeActionLabel(o, indexingIds.has(o.id))}
+                      删除
                     </button>
-                  )}
-                  {o.file_url && (
-                    <button
-                      onClick={() => handleDownload(o)}
-                      className="text-xs text-blue-600 hover:underline"
-                    >
-                      下载
-                    </button>
-                  )}
-                  <button
-                    onClick={() => handleDelete(o.id)}
-                    className="text-xs text-red-500 hover:underline"
-                  >
-                    删除
-                  </button>
+                  </div>
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         )}
       </div>
@@ -412,6 +402,31 @@ function knowledgeActionLabel(outcome: Outcome, indexing: boolean) {
   if (status === "indexed") return "重新解析";
   if (status === "failed") return "重试解析";
   return "解析入库";
+}
+
+function buildVectorKnowledgeSummary(outcome: Outcome) {
+  if (outcome.extra_data?.knowledge_status !== "indexed") return null;
+  const status = outcome.extra_data?.knowledge_vector_status || "not_started";
+  const count = Number(outcome.extra_data?.knowledge_vector_count || 0);
+  if (status === "indexed") {
+    return {
+      label: `语义检索已启用：${count} 个资料片段可被向量检索命中。`,
+      className: "border-emerald-100 bg-emerald-50 text-emerald-700",
+    };
+  }
+  if (status === "partial") {
+    return {
+      label: `语义检索部分启用：已覆盖 ${count} 个片段，其余内容会退回关键词检索。`,
+      className: "border-amber-100 bg-amber-50 text-amber-700",
+    };
+  }
+  if (status === "unavailable") {
+    return {
+      label: "暂未生成语义向量，相关资料仍会通过关键词检索参与引用。",
+      className: "border-slate-200 bg-slate-50 text-slate-600",
+    };
+  }
+  return null;
 }
 
 function KnowledgeStatusBadge({ outcome, indexing }: { outcome: Outcome; indexing: boolean }) {

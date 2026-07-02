@@ -1,0 +1,1200 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>首页学术检索门户紧凑样板</title>
+  <style>
+    :root {
+      --text: #152540;
+      --muted: #6e84a4;
+      --line: #d9e5f5;
+      --line-strong: #c7d9f1;
+      --blue: #307cf6;
+      --blue-strong: #1e67da;
+      --blue-soft: #edf5ff;
+      --panel: rgba(255, 255, 255, 0.9);
+      --shadow: 0 22px 56px rgba(43, 95, 173, 0.12);
+      --hero-shadow: 0 22px 62px rgba(43, 95, 173, 0.16);
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    html,
+    body {
+      margin: 0;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      font-family: "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+      color: var(--text);
+      background:
+        radial-gradient(circle at 12% 18%, rgba(73, 136, 255, 0.1), transparent 20%),
+        radial-gradient(circle at 88% 24%, rgba(118, 178, 255, 0.1), transparent 18%),
+        linear-gradient(180deg, #fcfdff 0%, #f4f8ff 58%, #eef5ff 100%);
+    }
+
+    body::before,
+    body::after {
+      content: "";
+      position: fixed;
+      width: 44vw;
+      height: 18vh;
+      bottom: 10vh;
+      pointer-events: none;
+      opacity: 0.45;
+      background: linear-gradient(180deg, transparent 0%, rgba(84, 140, 255, 0.06) 100%);
+      clip-path: polygon(0 74%, 18% 52%, 34% 63%, 48% 43%, 62% 56%, 76% 34%, 90% 46%, 100% 24%, 100% 100%, 0 100%);
+    }
+
+    body::before {
+      left: -2vw;
+    }
+
+    body::after {
+      right: -2vw;
+      transform: scaleX(-1);
+    }
+
+    .shell {
+      position: relative;
+      z-index: 1;
+      width: min(1420px, calc(100vw - 40px));
+      height: calc(100vh - 32px);
+      margin: 16px auto;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .topbar {
+      flex: 0 0 auto;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 18px;
+      padding: 0 4px 12px;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      font-size: 16px;
+      font-weight: 800;
+    }
+
+    .brand-mark {
+      display: grid;
+      width: 38px;
+      height: 38px;
+      place-items: center;
+      border-radius: 13px;
+      background: linear-gradient(145deg, #4e91ff 0%, #2f76eb 100%);
+      color: #fff;
+      box-shadow: 0 12px 28px rgba(47, 126, 247, 0.22);
+    }
+
+    .nav {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .nav a,
+    .nav button,
+    .search-button,
+    .filter-toggle,
+    .tag,
+    .hot-chip {
+      transition: 180ms ease;
+    }
+
+    .nav a {
+      padding: 8px 10px;
+      border-radius: 999px;
+      color: var(--text);
+      text-decoration: none;
+      font-size: 13px;
+      font-weight: 700;
+    }
+
+    .nav a:hover {
+      background: rgba(255, 255, 255, 0.76);
+    }
+
+    .login-button {
+      height: 40px;
+      padding: 0 16px;
+      border: 1px solid var(--line-strong);
+      border-radius: 13px;
+      background: rgba(255, 255, 255, 0.76);
+      color: var(--blue-strong);
+      font-size: 13px;
+      font-weight: 800;
+      box-shadow: 0 8px 24px rgba(47, 126, 247, 0.06);
+      cursor: pointer;
+    }
+
+    .viewport {
+      flex: 1 1 auto;
+      min-height: 0;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .hero,
+    .results {
+      position: absolute;
+      inset: 0;
+      transition: 320ms ease;
+    }
+
+    .hero {
+      opacity: 1;
+      transform: translateY(0);
+    }
+
+    .hero.hidden {
+      opacity: 0;
+      transform: translateY(-18px);
+      pointer-events: none;
+    }
+
+    .hero-inner {
+      width: min(1100px, 100%);
+      height: 100%;
+      margin: 0 auto;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding-top: 34px;
+    }
+
+    .title {
+      margin: 0;
+      font-size: clamp(34px, 4vw, 56px);
+      line-height: 1.08;
+      letter-spacing: -0.05em;
+      font-weight: 900;
+      text-align: center;
+    }
+
+    .subtitle {
+      margin: 12px auto 0;
+      max-width: 560px;
+      color: var(--muted);
+      font-size: 16px;
+      line-height: 1.65;
+      text-align: center;
+    }
+
+    .search-stage {
+      position: relative;
+      width: min(900px, calc(100vw - 150px));
+      margin-top: 24px;
+    }
+
+    .search-shell {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 160px 118px;
+      align-items: center;
+      min-height: 68px;
+      padding: 0 10px 0 18px;
+      border: 1px solid rgba(211, 224, 244, 0.95);
+      border-radius: 22px;
+      background: rgba(255, 255, 255, 0.88);
+      box-shadow: var(--hero-shadow);
+      backdrop-filter: blur(14px);
+    }
+
+    .search-field {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      min-width: 0;
+      padding-right: 14px;
+    }
+
+    .search-field svg {
+      color: #7a91b3;
+      flex: 0 0 auto;
+    }
+
+    .search-field input {
+      width: 100%;
+      border: 0;
+      background: transparent;
+      color: var(--text);
+      font-size: 15px;
+      font-weight: 600;
+      outline: none;
+    }
+
+    .search-field input::placeholder {
+      color: #9cafc9;
+    }
+
+    .filter-toggle {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      height: 48px;
+      margin-right: 8px;
+      border: 1px solid transparent;
+      border-left: 1px solid var(--line);
+      background: transparent;
+      color: var(--text);
+      font-size: 14px;
+      font-weight: 800;
+      cursor: pointer;
+    }
+
+    .filter-toggle.active {
+      color: var(--blue-strong);
+    }
+
+    .search-button {
+      height: 48px;
+      border: 0;
+      border-radius: 14px;
+      background: linear-gradient(145deg, #428dff 0%, #2f74eb 100%);
+      color: #fff;
+      font-size: 17px;
+      font-weight: 900;
+      cursor: pointer;
+      box-shadow: 0 16px 34px rgba(47, 126, 247, 0.24);
+    }
+
+    .hot-row {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+      margin-top: 14px;
+      color: var(--muted);
+      font-size: 13px;
+      font-weight: 700;
+    }
+
+    .hot-chip {
+      padding: 7px 13px;
+      border: 1px solid rgba(216, 227, 242, 0.96);
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.76);
+      color: #6980a3;
+      font-size: 13px;
+      font-weight: 700;
+      cursor: pointer;
+    }
+
+    .hot-chip:hover {
+      background: var(--blue-soft);
+      color: var(--blue-strong);
+      border-color: #cfe0ff;
+    }
+
+    .feature-grid {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 16px;
+      width: 100%;
+      margin-top: auto;
+      padding-top: 24px;
+    }
+
+    .feature-card {
+      display: grid;
+      grid-template-columns: 42px 1fr;
+      gap: 12px;
+      align-items: start;
+    }
+
+    .feature-icon {
+      display: grid;
+      width: 42px;
+      height: 42px;
+      place-items: center;
+      border-radius: 14px;
+      background: rgba(255, 255, 255, 0.8);
+      box-shadow: 0 12px 26px rgba(47, 126, 247, 0.06);
+      color: var(--blue);
+    }
+
+    .feature-card h3 {
+      margin: 1px 0 5px;
+      font-size: 15px;
+      line-height: 1.3;
+    }
+
+    .feature-card p {
+      margin: 0;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.62;
+    }
+
+    .metric-bar {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      width: 100%;
+      margin-top: 18px;
+      border: 1px solid rgba(220, 231, 244, 0.98);
+      border-radius: 24px;
+      background: linear-gradient(180deg, rgba(255,255,255,0.78), rgba(248, 251, 255, 0.92));
+      box-shadow: var(--shadow);
+      overflow: hidden;
+    }
+
+    .metric {
+      padding: 18px 12px 16px;
+      text-align: center;
+    }
+
+    .metric + .metric {
+      border-left: 1px solid rgba(220, 231, 244, 0.98);
+    }
+
+    .metric strong {
+      display: block;
+      color: var(--blue);
+      font-size: 22px;
+      font-weight: 900;
+      letter-spacing: -0.03em;
+    }
+
+    .metric span {
+      display: block;
+      margin-top: 6px;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 700;
+    }
+
+    .filter-panel {
+      position: absolute;
+      top: 58px;
+      right: 118px;
+      width: 312px;
+      padding: 15px;
+      border: 1px solid rgba(213, 225, 243, 0.98);
+      border-radius: 18px;
+      background: rgba(255, 255, 255, 0.96);
+      box-shadow: 0 24px 54px rgba(31, 88, 170, 0.14);
+      backdrop-filter: blur(16px);
+      opacity: 0;
+      transform: translateY(8px);
+      pointer-events: none;
+      transition: 180ms ease;
+    }
+
+    .filter-panel.open {
+      opacity: 1;
+      transform: translateY(0);
+      pointer-events: auto;
+    }
+
+    .filter-section + .filter-section {
+      margin-top: 14px;
+      padding-top: 14px;
+      border-top: 1px solid #e8eef8;
+    }
+
+    .filter-section h4 {
+      margin: 0 0 10px;
+      font-size: 13px;
+      font-weight: 900;
+    }
+
+    .fake-select,
+    .fake-range {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      min-height: 36px;
+      padding: 0 12px;
+      border: 1px solid #dde7f6;
+      border-radius: 11px;
+      background: #fff;
+      color: var(--text);
+      font-size: 12px;
+      font-weight: 700;
+    }
+
+    .checkbox-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 8px 12px;
+    }
+
+    .check {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 700;
+    }
+
+    .check span:first-child {
+      display: inline-block;
+      width: 14px;
+      height: 14px;
+      border: 1px solid #bfd0e8;
+      border-radius: 4px;
+      background: #fff;
+    }
+
+    .filter-actions {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-top: 16px;
+    }
+
+    .ghost-button,
+    .apply-button {
+      height: 36px;
+      border: 0;
+      border-radius: 11px;
+      font-size: 12px;
+      font-weight: 900;
+      cursor: pointer;
+    }
+
+    .ghost-button {
+      padding: 0 12px;
+      background: transparent;
+      color: #6b84a8;
+    }
+
+    .apply-button {
+      padding: 0 16px;
+      background: linear-gradient(145deg, #428dff 0%, #2f74eb 100%);
+      color: #fff;
+      box-shadow: 0 12px 24px rgba(47, 126, 247, 0.18);
+    }
+
+    .transition-panel {
+      position: absolute;
+      top: 54px;
+      left: 50%;
+      width: min(660px, calc(100vw - 180px));
+      padding: 22px;
+      border: 1px solid rgba(215, 228, 244, 0.98);
+      border-radius: 22px;
+      background: rgba(255, 255, 255, 0.94);
+      box-shadow: var(--hero-shadow);
+      backdrop-filter: blur(16px);
+      opacity: 0;
+      transform: translateX(-50%) translateY(14px) scale(0.98);
+      pointer-events: none;
+      transition: 240ms ease;
+    }
+
+    .transition-panel.show {
+      opacity: 1;
+      transform: translateX(-50%) translateY(0) scale(1);
+      pointer-events: auto;
+    }
+
+    .transition-panel h3 {
+      margin: 0;
+      font-size: 21px;
+      line-height: 1.2;
+    }
+
+    .transition-panel p {
+      margin: 8px 0 0;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.7;
+    }
+
+    .flow {
+      display: grid;
+      gap: 9px;
+      margin-top: 16px;
+    }
+
+    .flow-item {
+      display: grid;
+      grid-template-columns: 36px minmax(0, 1fr) auto;
+      align-items: center;
+      gap: 10px;
+      padding: 11px 12px;
+      border: 1px solid #e4edf9;
+      border-radius: 14px;
+      background: #fff;
+      opacity: 0.42;
+      transform: translateX(-4px);
+      transition: 220ms ease;
+    }
+
+    .flow-item.active {
+      opacity: 1;
+      transform: translateX(0);
+      border-color: #cddfff;
+      box-shadow: 0 10px 22px rgba(47, 126, 247, 0.06);
+    }
+
+    .flow-index {
+      display: grid;
+      width: 36px;
+      height: 36px;
+      place-items: center;
+      border-radius: 11px;
+      background: var(--blue-soft);
+      color: var(--blue-strong);
+      font-size: 11px;
+      font-weight: 900;
+    }
+
+    .flow-item strong {
+      display: block;
+      font-size: 13px;
+    }
+
+    .flow-item span {
+      display: block;
+      margin-top: 3px;
+      color: var(--muted);
+      font-size: 11px;
+      line-height: 1.5;
+    }
+
+    .flow-status {
+      color: #88a0c0;
+      font-size: 11px;
+      font-weight: 800;
+    }
+
+    .flow-item.active .flow-status {
+      color: var(--blue-strong);
+    }
+
+    .results {
+      opacity: 0;
+      transform: translateY(18px);
+      pointer-events: none;
+    }
+
+    .results.show {
+      opacity: 1;
+      transform: translateY(0);
+      pointer-events: auto;
+    }
+
+    .results-shell {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 304px;
+      gap: 18px;
+      height: 100%;
+      min-height: 0;
+    }
+
+    .results-main,
+    .results-side {
+      min-width: 0;
+      min-height: 0;
+    }
+
+    .summary-bar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      padding: 14px 16px;
+      border: 1px solid rgba(220, 231, 244, 0.98);
+      border-radius: 18px;
+      background: rgba(255, 255, 255, 0.88);
+      box-shadow: 0 12px 30px rgba(47, 126, 247, 0.06);
+    }
+
+    .summary-bar strong {
+      display: block;
+      font-size: 17px;
+      line-height: 1.32;
+      letter-spacing: -0.03em;
+    }
+
+    .summary-bar p {
+      margin: 5px 0 0;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.55;
+    }
+
+    .tag-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
+    .tag {
+      padding: 7px 10px;
+      border: 1px solid #d8e5f7;
+      border-radius: 999px;
+      background: #fff;
+      color: #6882a7;
+      font-size: 11px;
+      font-weight: 800;
+    }
+
+    .tag.active {
+      border-color: #cfe0ff;
+      background: var(--blue-soft);
+      color: var(--blue-strong);
+    }
+
+    .paper-list {
+      display: grid;
+      gap: 12px;
+      margin-top: 12px;
+      height: calc(100% - 84px);
+      overflow: auto;
+      padding-right: 6px;
+    }
+
+    .paper-card,
+    .side-card {
+      padding: 16px;
+      border: 1px solid rgba(220, 231, 244, 0.98);
+      border-radius: 18px;
+      background: rgba(255, 255, 255, 0.9);
+      box-shadow: 0 12px 28px rgba(47, 126, 247, 0.06);
+    }
+
+    .paper-meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 7px;
+      margin-bottom: 10px;
+    }
+
+    .paper-pill {
+      padding: 6px 9px;
+      border: 1px solid #d9e7fb;
+      border-radius: 999px;
+      background: #fff;
+      color: #6882a7;
+      font-size: 10px;
+      font-weight: 800;
+    }
+
+    .paper-pill.source {
+      background: var(--blue-soft);
+      color: var(--blue-strong);
+      border-color: #cfe0ff;
+    }
+
+    .paper-card h3 {
+      margin: 0;
+      font-size: 18px;
+      line-height: 1.35;
+      letter-spacing: -0.03em;
+    }
+
+    .paper-authors {
+      margin-top: 8px;
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 700;
+      line-height: 1.55;
+    }
+
+    .paper-card p {
+      margin: 10px 0 0;
+      color: #4f6687;
+      font-size: 12px;
+      line-height: 1.68;
+    }
+
+    .results-side {
+      overflow: auto;
+      padding-right: 4px;
+    }
+
+    .side-card + .side-card {
+      margin-top: 12px;
+    }
+
+    .side-card h4 {
+      margin: 0 0 10px;
+      font-size: 15px;
+    }
+
+    .side-list {
+      display: grid;
+      gap: 9px;
+    }
+
+    .side-item {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      padding: 10px 12px;
+      border: 1px solid #e4edf9;
+      border-radius: 14px;
+      background: #fff;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 700;
+    }
+
+    .side-item strong {
+      color: var(--text);
+      font-size: 13px;
+    }
+
+    .side-note {
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.7;
+    }
+
+    @media (max-width: 1120px) {
+      html,
+      body {
+        overflow: auto;
+      }
+
+      .shell {
+        height: auto;
+        min-height: calc(100vh - 32px);
+      }
+
+      .viewport {
+        overflow: visible;
+      }
+
+      .hero,
+      .results {
+        position: relative;
+      }
+
+      .search-shell,
+      .results-shell,
+      .feature-grid,
+      .metric-bar {
+        grid-template-columns: 1fr;
+      }
+
+      .filter-toggle {
+        border-left: 0;
+        border-top: 1px solid var(--line);
+        margin-right: 0;
+        padding-top: 10px;
+      }
+
+      .filter-panel {
+        right: 0;
+        top: 132px;
+      }
+
+      .paper-list,
+      .results-side {
+        height: auto;
+        overflow: visible;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <header class="topbar">
+      <div class="brand">
+        <div class="brand-mark">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9Z"></path>
+            <path d="M14 3v6h6"></path>
+            <path d="M10 13H8"></path>
+            <path d="M16 17H8"></path>
+            <path d="m17 13-2.5 2.5L13 14"></path>
+          </svg>
+        </div>
+        <div>Paper Search</div>
+      </div>
+
+      <nav class="nav">
+        <a href="javascript:void(0)">高级搜索</a>
+        <a href="javascript:void(0)">浏览</a>
+        <a href="javascript:void(0)">推荐</a>
+        <a href="javascript:void(0)">我的库</a>
+        <button class="login-button" type="button">登录 / 注册</button>
+      </nav>
+    </header>
+
+    <div class="viewport">
+      <section class="hero" id="heroSection">
+        <div class="hero-inner">
+          <h1 class="title">探索学术文献的无限可能</h1>
+          <p class="subtitle">高效检索全球学术资源，助力科研与学习</p>
+
+          <div class="search-stage">
+            <div class="search-shell">
+              <label class="search-field">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                  <circle cx="11" cy="11" r="7"></circle>
+                  <path d="m20 20-3.5-3.5"></path>
+                </svg>
+                <input id="queryInput" value="生成式人工智能支持研究生论文写作的高质量中英文文献" placeholder="搜索论文标题、关键词、作者或 DOI" />
+              </label>
+
+              <button class="filter-toggle" id="filterToggle" type="button">
+                <span>全部领域</span>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="m6 9 6 6 6-6"></path>
+                </svg>
+              </button>
+
+              <button class="search-button" id="searchButton" type="button">搜索</button>
+            </div>
+
+            <div class="filter-panel" id="filterPanel">
+              <div class="filter-section">
+                <h4>学科领域</h4>
+                <div class="fake-select">
+                  <span>全部领域</span>
+                  <span>⌄</span>
+                </div>
+              </div>
+
+              <div class="filter-section">
+                <h4>文献类型</h4>
+                <div class="checkbox-grid">
+                  <div class="check"><span></span><span>期刊论文</span></div>
+                  <div class="check"><span></span><span>会议论文</span></div>
+                  <div class="check"><span></span><span>预印本</span></div>
+                  <div class="check"><span></span><span>学位论文</span></div>
+                  <div class="check"><span></span><span>报告</span></div>
+                  <div class="check"><span></span><span>专利</span></div>
+                </div>
+              </div>
+
+              <div class="filter-section">
+                <h4>出版时间</h4>
+                <div class="fake-range">
+                  <span>开始日期</span>
+                  <span>~</span>
+                  <span>结束日期</span>
+                </div>
+              </div>
+
+              <div class="filter-section">
+                <h4>语种</h4>
+                <div class="fake-select">
+                  <span>不限语言</span>
+                  <span>⌄</span>
+                </div>
+              </div>
+
+              <div class="filter-actions">
+                <button class="ghost-button" type="button">重置</button>
+                <button class="apply-button" id="applyFilterButton" type="button">应用筛选</button>
+              </div>
+            </div>
+          </div>
+
+          <div class="hot-row">
+            <span>热门搜索：</span>
+            <button class="hot-chip" type="button">深度学习</button>
+            <button class="hot-chip" type="button">大语言模型</button>
+            <button class="hot-chip" type="button">图神经网络</button>
+            <button class="hot-chip" type="button">量子计算</button>
+            <button class="hot-chip" type="button">扩散模型</button>
+          </div>
+
+          <div class="feature-grid">
+            <article class="feature-card">
+              <div class="feature-icon">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round">
+                  <circle cx="12" cy="12" r="9"></circle>
+                  <path d="M3 12h18"></path>
+                  <path d="M12 3a15.3 15.3 0 0 1 4 9 15.3 15.3 0 0 1-4 9 15.3 15.3 0 0 1-4-9 15.3 15.3 0 0 1 4-9Z"></path>
+                </svg>
+              </div>
+              <div>
+                <h3>海量资源</h3>
+                <p>覆盖全球数亿篇学术论文，来自权威数据库与开放来源。</p>
+              </div>
+            </article>
+
+            <article class="feature-card">
+              <div class="feature-icon">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round">
+                  <circle cx="12" cy="12" r="8"></circle>
+                  <circle cx="12" cy="12" r="2"></circle>
+                  <path d="M12 2v3"></path>
+                  <path d="M12 19v3"></path>
+                  <path d="m4.93 4.93 2.12 2.12"></path>
+                  <path d="m16.95 16.95 2.12 2.12"></path>
+                </svg>
+              </div>
+              <div>
+                <h3>精准检索</h3>
+                <p>支持语义搜索与条件筛选，快速定位高相关、高可信文献。</p>
+              </div>
+            </article>
+
+            <article class="feature-card">
+              <div class="feature-icon">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M4 19.5V5a2 2 0 0 1 2-2h12"></path>
+                  <path d="M18 2v17.5"></path>
+                  <path d="M7 22h13a1 1 0 0 0 1-1V7a2 2 0 0 0-2-2H7a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"></path>
+                  <path d="M9 9h6"></path>
+                  <path d="M9 13h8"></path>
+                </svg>
+              </div>
+              <div>
+                <h3>智能推荐</h3>
+                <p>基于主题与上下文给出相关研究线索，辅助继续深入检索。</p>
+              </div>
+            </article>
+
+            <article class="feature-card">
+              <div class="feature-icon">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"></path>
+                </svg>
+              </div>
+              <div>
+                <h3>个人管理</h3>
+                <p>文献、笔记与标签集中承接，便于继续进入研究与写作。</p>
+              </div>
+            </article>
+          </div>
+
+          <div class="metric-bar">
+            <div class="metric">
+              <strong>200,000,000+</strong>
+              <span>学术论文</span>
+            </div>
+            <div class="metric">
+              <strong>10,000+</strong>
+              <span>权威来源</span>
+            </div>
+            <div class="metric">
+              <strong>100+</strong>
+              <span>学科领域</span>
+            </div>
+            <div class="metric">
+              <strong>1,000,000+</strong>
+              <span>每日更新</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="transition-panel" id="transitionPanel">
+          <h3>正在为你组织检索任务</h3>
+          <p>先展示检索过程，再在同一屏内承接文献结果，不再依赖整页滚动。</p>
+
+          <div class="flow">
+            <div class="flow-item active">
+              <div class="flow-index">01</div>
+              <div>
+                <strong>解析研究问题</strong>
+                <span>抽取主题、对象、方法与语种偏好。</span>
+              </div>
+              <div class="flow-status">进行中</div>
+            </div>
+
+            <div class="flow-item">
+              <div class="flow-index">02</div>
+              <div>
+                <strong>匹配检索来源</strong>
+                <span>组合中英文库、文献类型和时间条件。</span>
+              </div>
+              <div class="flow-status">等待</div>
+            </div>
+
+            <div class="flow-item">
+              <div class="flow-index">03</div>
+              <div>
+                <strong>筛选高相关结果</strong>
+                <span>按相关性、引用与来源质量过滤。</span>
+              </div>
+              <div class="flow-status">等待</div>
+            </div>
+
+            <div class="flow-item">
+              <div class="flow-index">04</div>
+              <div>
+                <strong>生成结果摘要</strong>
+                <span>整理来源分布与继续研究入口。</span>
+              </div>
+              <div class="flow-status">等待</div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="results" id="resultsSection">
+        <div class="results-shell">
+          <div class="results-main">
+            <div class="summary-bar">
+              <div>
+                <strong>“生成式人工智能支持研究生论文写作的高质量中英文文献”</strong>
+                <p>共整理 36 篇高相关文献，优先显示近五年、可验证来源与开放获取结果。</p>
+              </div>
+              <div class="tag-row">
+                <span class="tag active">全部领域</span>
+                <span class="tag active">中英文</span>
+                <span class="tag">期刊论文</span>
+                <span class="tag">2020-2026</span>
+              </div>
+            </div>
+
+            <div class="paper-list">
+              <article class="paper-card">
+                <div class="paper-meta">
+                  <span class="paper-pill source">PubMed</span>
+                  <span class="paper-pill">开放获取</span>
+                  <span class="paper-pill">高相关</span>
+                  <span class="paper-pill">引用 128</span>
+                </div>
+                <h3>Large Language Models for Graduate Academic Writing Support: Evidence, Risks, and Design Implications</h3>
+                <div class="paper-authors">Smith J., Chen Y., Roberts P. · 2025 · Journal of Educational Technology</div>
+                <p>围绕研究生学术写作场景讨论大语言模型在选题分析、文献整合和结构化写作中的支持作用，适合作为背景依据与方法参照。</p>
+              </article>
+
+              <article class="paper-card">
+                <div class="paper-meta">
+                  <span class="paper-pill source">知网</span>
+                  <span class="paper-pill">中文核心</span>
+                  <span class="paper-pill">高相关</span>
+                  <span class="paper-pill">引用 76</span>
+                </div>
+                <h3>生成式人工智能辅助研究生论文写作的应用边界与学术规范研究</h3>
+                <div class="paper-authors">王晨, 刘帆, 赵宇 · 2024 · 现代教育技术</div>
+                <p>从国内高校研究生培养情境分析 AI 在论文构思、文献整理和语言润色中的实际用途，并讨论引用失真与学术依赖风险。</p>
+              </article>
+
+              <article class="paper-card">
+                <div class="paper-meta">
+                  <span class="paper-pill source">OpenAlex</span>
+                  <span class="paper-pill">综述</span>
+                  <span class="paper-pill">开放获取</span>
+                  <span class="paper-pill">引用 214</span>
+                </div>
+                <h3>Retrieval-Augmented Academic Writing Assistants: A Systematic Review of Grounded Generation</h3>
+                <div class="paper-authors">Kumar A., Li X., Park M. · 2024 · ACM Computing Surveys</div>
+                <p>系统整理检索增强学术写作助手的框架构成，比较证据召回、段落生成、引用落地和可解释性设计。</p>
+              </article>
+
+              <article class="paper-card">
+                <div class="paper-meta">
+                  <span class="paper-pill source">Semantic Scholar</span>
+                  <span class="paper-pill">方法</span>
+                  <span class="paper-pill">高相关</span>
+                </div>
+                <h3>Evidence-Grounded Scholarly Dialogue Agents for Research Writing</h3>
+                <div class="paper-authors">Lopez M., Green H. · 2023 · AI in Education</div>
+                <p>聚焦学术对话智能体如何利用外部检索结果进行回答约束，为后续学术对话模块提供直接的系统设计参考。</p>
+              </article>
+            </div>
+          </div>
+
+          <aside class="results-side">
+            <div class="side-card">
+              <h4>来源分布</h4>
+              <div class="side-list">
+                <div class="side-item"><strong>PubMed</strong><span>12 篇</span></div>
+                <div class="side-item"><strong>知网</strong><span>9 篇</span></div>
+                <div class="side-item"><strong>OpenAlex</strong><span>8 篇</span></div>
+                <div class="side-item"><strong>Semantic Scholar</strong><span>7 篇</span></div>
+              </div>
+            </div>
+
+            <div class="side-card">
+              <h4>继续操作</h4>
+              <div class="side-list">
+                <div class="side-item"><strong>进入学术对话</strong><span>基于当前结果</span></div>
+                <div class="side-item"><strong>生成研究方向</strong><span>提炼主题分支</span></div>
+                <div class="side-item"><strong>保存到项目</strong><span>沉淀文献依据</span></div>
+              </div>
+            </div>
+
+            <div class="side-card">
+              <h4>结果说明</h4>
+              <p class="side-note">这版样板已经改成单屏结构。首页态不需要下滑，搜索后结果区也固定在一屏内，只有中间结果列表和右侧信息列各自内部滚动。</p>
+            </div>
+          </aside>
+        </div>
+      </section>
+    </div>
+  </div>
+
+  <script>
+    const heroSection = document.getElementById("heroSection");
+    const resultsSection = document.getElementById("resultsSection");
+    const transitionPanel = document.getElementById("transitionPanel");
+    const filterToggle = document.getElementById("filterToggle");
+    const filterPanel = document.getElementById("filterPanel");
+    const applyFilterButton = document.getElementById("applyFilterButton");
+    const searchButton = document.getElementById("searchButton");
+    const hotChips = document.querySelectorAll(".hot-chip");
+    const queryInput = document.getElementById("queryInput");
+    const flowItems = Array.from(document.querySelectorAll(".flow-item"));
+    let playing = false;
+
+    function setFlowStep(index) {
+      flowItems.forEach((item, currentIndex) => {
+        const status = item.querySelector(".flow-status");
+        item.classList.toggle("active", currentIndex <= index);
+        if (status) {
+          status.textContent = currentIndex < index ? "完成" : currentIndex === index ? "进行中" : "等待";
+        }
+      });
+    }
+
+    function toggleFilter(force) {
+      const nextOpen = typeof force === "boolean" ? force : !filterPanel.classList.contains("open");
+      filterPanel.classList.toggle("open", nextOpen);
+      filterToggle.classList.toggle("active", nextOpen);
+    }
+
+    async function playSearchTransition() {
+      if (playing) return;
+      playing = true;
+      toggleFilter(false);
+      transitionPanel.classList.add("show");
+      setFlowStep(0);
+
+      await new Promise((resolve) => setTimeout(resolve, 480));
+      setFlowStep(1);
+      await new Promise((resolve) => setTimeout(resolve, 460));
+      setFlowStep(2);
+      await new Promise((resolve) => setTimeout(resolve, 460));
+      setFlowStep(3);
+      await new Promise((resolve) => setTimeout(resolve, 560));
+
+      transitionPanel.classList.remove("show");
+      heroSection.classList.add("hidden");
+      resultsSection.classList.add("show");
+      playing = false;
+    }
+
+    filterToggle.addEventListener("click", () => toggleFilter());
+    applyFilterButton.addEventListener("click", () => toggleFilter(false));
+    searchButton.addEventListener("click", playSearchTransition);
+
+    document.addEventListener("click", (event) => {
+      if (!filterPanel.contains(event.target) && !filterToggle.contains(event.target)) {
+        toggleFilter(false);
+      }
+    });
+
+    hotChips.forEach((chip) => {
+      chip.addEventListener("click", () => {
+        queryInput.value = chip.textContent;
+      });
+    });
+  </script>
+</body>
+</html>

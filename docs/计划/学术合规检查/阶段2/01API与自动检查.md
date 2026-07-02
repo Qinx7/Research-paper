@@ -1,31 +1,27 @@
-# 阶段 2 步骤 01：API 端点 + 章节生成自动检查
+﻿# 闃舵 2 姝ラ 01锛欰PI 绔偣 + 绔犺妭鐢熸垚鑷姩妫€鏌?
+## 鐩爣
 
-## 目标
-
-在 drafts API 中新增合规检查端点，并在章节生成任务完成后自动触发规则检查。
-
-## 1. API 端点（修改 `backend/app/api/drafts.py`）
-
-### 1.1 运行合规检查
-
+鍦?drafts API 涓柊澧炲悎瑙勬鏌ョ鐐癸紝骞跺湪绔犺妭鐢熸垚浠诲姟瀹屾垚鍚庤嚜鍔ㄨЕ鍙戣鍒欐鏌ャ€?
+## 1. API 绔偣锛堜慨鏀?`backend/app/api/drafts.py`锛?
+### 1.1 杩愯鍚堣妫€鏌?
 ```python
 @router.post("/{draft_id}/check-compliance")
 def check_compliance(
     draft_id: str,
-    enable_ai: bool = Query(False, description="是否启用 AI 深度检查"),
+    enable_ai: bool = Query(False, description="鏄惁鍚敤 AI 娣卞害妫€鏌?),
     db: Session = Depends(get_db),
 ):
-    """对论文草稿运行全部合规检查（规则 + 可选 AI 语义对比）"""
+    """瀵硅鏂囪崏绋胯繍琛屽叏閮ㄥ悎瑙勬鏌ワ紙瑙勫垯 + 鍙€?AI 璇箟瀵规瘮锛?""
     draft = db.query(Draft).filter(Draft.id == UUID(draft_id)).first()
     if not draft:
-        raise HTTPException(status_code=404, detail="草稿不存在")
+        raise HTTPException(status_code=404, detail="鑽夌涓嶅瓨鍦?)
 
     outcomes = db.query(Outcome).filter(Outcome.project_id == draft.project_id).all()
     papers = db.query(Paper).filter(Paper.project_id == draft.project_id).all()
 
     result = check_draft(draft, outcomes, papers, enable_ai=enable_ai)
 
-    # 持久化合规结果到 draft.content 的 _compliance 字段
+    # 鎸佷箙鍖栧悎瑙勭粨鏋滃埌 draft.content 鐨?_compliance 瀛楁
     content = draft.content or {}
     content["_compliance"] = result.model_dump(mode="json")
     draft.content = content
@@ -34,7 +30,7 @@ def check_compliance(
     return result
 ```
 
-### 1.2 用户确认 issues
+### 1.2 鐢ㄦ埛纭 issues
 
 ```python
 @router.post("/{draft_id}/confirm-compliance")
@@ -43,10 +39,10 @@ def confirm_compliance(
     payload: ComplianceConfirmRequest,
     db: Session = Depends(get_db),
 ):
-    """用户确认/忽略/修正某个合规 issue"""
+    """鐢ㄦ埛纭/蹇界暐/淇鏌愪釜鍚堣 issue"""
     draft = db.query(Draft).filter(Draft.id == UUID(draft_id)).first()
     if not draft:
-        raise HTTPException(status_code=404, detail="草稿不存在")
+        raise HTTPException(status_code=404, detail="鑽夌涓嶅瓨鍦?)
 
     content = draft.content or {}
     compliance = content.get("_compliance", {})
@@ -65,47 +61,43 @@ def confirm_compliance(
     return {"status": "ok", "chapter_key": payload.chapter_key}
 ```
 
-### 1.3 获取合规状态
-
+### 1.3 鑾峰彇鍚堣鐘舵€?
 ```python
 @router.get("/{draft_id}/compliance-status")
 def get_compliance_status(draft_id: str, db: Session = Depends(get_db)):
-    """获取论文草稿的合规检查状态"""
+    """鑾峰彇璁烘枃鑽夌鐨勫悎瑙勬鏌ョ姸鎬?""
     draft = db.query(Draft).filter(Draft.id == UUID(draft_id)).first()
     if not draft:
-        raise HTTPException(status_code=404, detail="草稿不存在")
+        raise HTTPException(status_code=404, detail="鑽夌涓嶅瓨鍦?)
 
     content = draft.content or {}
     compliance = content.get("_compliance")
     if not compliance:
-        return {"checked": False, "message": "尚未执行合规检查"}
+        return {"checked": False, "message": "灏氭湭鎵ц鍚堣妫€鏌?}
 
     return compliance
 ```
 
-## 2. 章节生成后自动规则检查（修改 `backend/app/tasks/paper_task.py`）
-
-在 `generate_chapter_task` 中，章节内容保存到 DB 后，追加：
-
+## 2. 绔犺妭鐢熸垚鍚庤嚜鍔ㄨ鍒欐鏌ワ紙淇敼 `backend/app/tasks/paper_task.py`锛?
+鍦?`generate_chapter_task` 涓紝绔犺妭鍐呭淇濆瓨鍒?DB 鍚庯紝杩藉姞锛?
 ```python
-# 自动运行规则检查（不含 AI）
-from ..services.compliance_checker import check_draft
+# 鑷姩杩愯瑙勫垯妫€鏌ワ紙涓嶅惈 AI锛?from ..services.compliance_checker import check_draft
 outcomes = db.query(Outcome).filter(Outcome.project_id == draft.project_id).all()
 papers = db.query(Paper).filter(Paper.project_id == draft.project_id).all()
 result = check_draft(draft, outcomes, papers, enable_ai=False)
 
-# 存入 draft.content._compliance
+# 瀛樺叆 draft.content._compliance
 content = draft.content or {}
 content["_compliance"] = result.model_dump(mode="json")
 draft.content = content
 db.commit()
 ```
 
-AI 深度检查不自动触发（耗时较长，不适合在 Celery 任务中运行），由用户在前端手动触发。
+AI 娣卞害妫€鏌ヤ笉鑷姩瑙﹀彂锛堣€楁椂杈冮暱锛屼笉閫傚悎鍦?Celery 浠诲姟涓繍琛岋級锛岀敱鐢ㄦ埛鍦ㄥ墠绔墜鍔ㄨЕ鍙戙€?
+## 3. 楠岃瘉
 
-## 3. 验证
+1. `POST /api/drafts/{id}/check-compliance` 鈫?杩斿洖 ComplianceResult
+2. `POST /api/drafts/{id}/check-compliance?enable_ai=true` 鈫?杩斿洖鍚?AI 妫€鏌ョ粨鏋滅殑 ComplianceResult
+3. `POST /api/drafts/{id}/confirm-compliance` 鈫?issue 纭鎴愬姛
+4. 璋冪敤 `generate_chapter_task` 鍚?鈫?`_compliance` 瀛楁鑷姩鍐欏叆
 
-1. `POST /api/drafts/{id}/check-compliance` → 返回 ComplianceResult
-2. `POST /api/drafts/{id}/check-compliance?enable_ai=true` → 返回含 AI 检查结果的 ComplianceResult
-3. `POST /api/drafts/{id}/confirm-compliance` → issue 确认成功
-4. 调用 `generate_chapter_task` 后 → `_compliance` 字段自动写入

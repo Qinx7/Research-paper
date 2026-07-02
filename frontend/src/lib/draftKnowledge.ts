@@ -22,7 +22,10 @@ export function getDraftChapterRecord(draft: Draft | null, key: string): DraftCh
   if (!draft?.content) return null;
   const value = draft.content[key];
   if (!value || typeof value !== "object") return null;
-  return value;
+  if (typeof (value as DraftChapterRecord).title !== "string") return null;
+  if (typeof (value as DraftChapterRecord).content !== "string") return null;
+  if (typeof (value as DraftChapterRecord).status !== "string") return null;
+  return value as DraftChapterRecord;
 }
 
 export function getDraftReferences(draft: Draft | null): string[] {
@@ -33,7 +36,14 @@ export function getDraftReferences(draft: Draft | null): string[] {
     .filter(Boolean) as string[];
 
   const chapterCitationReferences = Object.values(draft.content || {})
-    .flatMap((chapter) => (chapter?.citations || []).map((citation) => citation?.trim()).filter(Boolean) as string[]);
+    .flatMap((chapter) => {
+      if (!chapter || typeof chapter !== "object" || !Array.isArray((chapter as DraftChapterRecord).citations)) {
+        return [];
+      }
+      return ((chapter as DraftChapterRecord).citations || [])
+        .map((citation) => citation?.trim())
+        .filter(Boolean) as string[];
+    });
 
   return Array.from(new Set([...structuredReferences, ...chapterCitationReferences]));
 }

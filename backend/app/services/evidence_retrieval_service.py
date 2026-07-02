@@ -1,4 +1,6 @@
-"""项目内部证据卡片与项目文献检索服务。"""
+"""项目内部证据卡片、文献与资料片段检索服务。"""
+from __future__ import annotations
+
 import re
 from typing import Any
 from uuid import UUID
@@ -8,12 +10,13 @@ from sqlalchemy.orm import Session
 from ..models.paper import Paper
 from ..models.paper_note import PaperNote
 from ..models.project_document_chunk import ProjectDocumentChunk
+from .project_document_embedding_service import search_similar_project_document_chunks
 
 STRONG_EVIDENCE_NOTE_TYPES = {"finding", "method", "limitation"}
 
 
 def tokenize_evidence_query(text: str) -> list[str]:
-    """把用户问题拆成中英文关键词，用于轻量证据召回。"""
+    """拆分用户问题中的关键词，用于轻量证据召回。"""
     raw_tokens = re.findall(r"[a-zA-Z0-9][a-zA-Z0-9_-]{1,}|[\u4e00-\u9fff]{2,8}", text or "")
     tokens: list[str] = []
     seen: set[str] = set()
@@ -106,19 +109,51 @@ def retrieve_project_document_chunks(
         .all()
     )
 
-    items = []
+    keyword_items = []
     for chunk in chunks:
         item = _document_chunk_to_evidence_item(chunk, project_id, tokens)
         if item["score"] <= 0 and tokens:
             continue
-        items.append(item)
+        keyword_items.append(item)
 
-    items.sort(key=lambda item: item["score"], reverse=True)
-    return items[:safe_limit]
+    keyword_items.sort(key=lambda item: item["score"], reverse=True)
+    semantic_items = _semantic_project_document_evidence_items(db, project_id, query, limit=safe_limit)
+    return merge_project_document_evidence_items(keyword_items[:safe_limit], semantic_items, limit=safe_limit)
+
+
+def merge_project_document_evidence_items(
+    keyword_items: list[dict[str, Any]],
+    semantic_items: list[dict[str, Any]],
+    *,
+    limit: int = 6,
+) -> list[dict[str, Any]]:
+    """合并项目资料关键词证据与语义证据。"""
+    merged: dict[str, dict[str, Any]] = {}
+    for item in keyword_items + semantic_items:
+        key = str(item.get("source_title") or item.get("title") or item.get("action_url") or "")
+        existing = merged.get(key)
+        if existing is None:
+            merged[key] = {
+                **item,
+                "score_reasons": list(dict.fromkeys(item.get("score_reasons", []))),
+            }
+            continue
+
+        existing["score"] = max(float(existing.get("score") or 0), float(item.get("score") or 0))
+        existing["score_reasons"] = list(
+            dict.fromkeys([*(existing.get("score_reasons") or []), *(item.get("score_reasons") or [])])
+        )
+        for field, value in item.items():
+            if existing.get(field) in (None, "", [], {}) and value not in (None, "", [], {}):
+                existing[field] = value
+
+    results = list(merged.values())
+    results.sort(key=lambda item: float(item.get("score") or 0), reverse=True)
+    return results[: max(1, min(limit, 30))]
 
 
 def build_evidence_context(items: list[dict[str, Any]]) -> str:
-    """把证据卡片列表格式化为可放进 Agent prompt 的上下文。"""
+    """把证据项目格式化为可放进 Agent prompt 的上下文。"""
     if not items:
         return ""
 
@@ -201,7 +236,7 @@ def _paper_to_evidence_item(paper, project_id: UUID | str, tokens: list[str]) ->
     )
 
     meta_bits = [bit for bit in [venue, f"{year}" if year else None, f"来源 {source}" if source else None] if bit]
-    meta_line = " · ".join(meta_bits)
+    meta_line = " 路 ".join(meta_bits)
     content_excerpt = abstract[:600] if abstract else meta_line or "项目文献库已保存该文献，当前暂无摘要。"
 
     return {
@@ -243,6 +278,39 @@ def _document_chunk_to_evidence_item(chunk, project_id: UUID | str, tokens: list
         "action_label": "下载来源文件",
         "tags": [getattr(chunk, "source_type", "")] if getattr(chunk, "source_type", None) else [],
     }
+
+
+def _semantic_project_document_evidence_items(
+    db: Session,
+    project_id: UUID | str,
+    query: str,
+    *,
+    limit: int,
+) -> list[dict[str, Any]]:
+    hits = search_similar_project_document_chunks(
+        db,
+        project_id=project_id,
+        query=query,
+        top_k=limit,
+    )
+    items: list[dict[str, Any]] = []
+    for hit in hits:
+        score = float(hit.get("semantic_score") or 0)
+        items.append(
+            {
+                "kind": "project_document_chunk",
+                "title": hit.get("title") or hit.get("source_filename") or "上传资料",
+                "content_excerpt": hit.get("content_excerpt") or "",
+                "score": score,
+                "score_reasons": [f"语义相似 {score:.2f}"],
+                "source_title": hit.get("source_filename") or hit.get("title"),
+                "source": "project_upload",
+                "action_url": f"/api/outcomes/{hit['outcome_id']}/download",
+                "action_label": "下载来源文件",
+                "tags": [hit.get("source_type")] if hit.get("source_type") else [],
+            }
+        )
+    return items
 
 
 def _score_note(
@@ -289,7 +357,6 @@ def _score_note(
             score += 1
             add_reason("可信度达标")
 
-    # finding/method/limitation 更适合作为可引用依据；idea 只作为灵感，不额外加权。
     if note_type in STRONG_EVIDENCE_NOTE_TYPES:
         score += 1
         add_reason("方法/发现类证据")
@@ -320,7 +387,7 @@ def _score_document_chunk(
             add_reason("资料标题命中")
         if token in filename_text:
             score += 2
-            add_reason("文件名命中")
+            add_reason("文件命名命中")
         if token in content_text:
             score += 3
             add_reason("资料正文命中")

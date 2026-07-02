@@ -1,4 +1,4 @@
-/** 首页学术检索入口：统一承接检索、学术对话、会话历史和 References 面板。 */
+/** 首页学术检索入口：统一承接检索、本次检索分析、历史记录和 References 面板。 */
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -326,7 +326,7 @@ export default function HomeSearchLanding() {
               break;
             }
             case "error":
-              setErrorText(event.message || "学术对话处理失败");
+              setErrorText(event.message || "检索分析处理失败");
               setIsStreaming(false);
               setStreamingEvidence(null);
               evidenceRef.current = null;
@@ -1032,7 +1032,7 @@ function HomeHero({
             </span>
             <span className="min-w-0">
               <span className="block text-base font-black tracking-[-0.02em] text-[#152540]">Paper Search</span>
-              <span className="block text-[11px] font-bold text-[#7b90ad]">学术文献检索工作台</span>
+              <span className="block text-xs font-bold text-[#7b90ad]">学术文献检索工作台</span>
             </span>
           </button>
 
@@ -1064,16 +1064,16 @@ function HomeHero({
 
         <section className="relative min-h-0 flex-1 overflow-hidden">
           <div className={`flex h-full flex-col items-center text-center transition-all duration-300 ${transitionStep !== null ? "-translate-y-4 opacity-25" : "translate-y-0 opacity-100"}`}>
-            <div className="w-full pt-[5vh]">
-              <h1 className="m-0 text-[34px] font-black leading-[1.08] tracking-[-0.04em] text-[#152540] md:text-[48px] xl:text-[56px]">
+            <div className="w-full pt-[3vh]">
+              <h1 className="m-0 text-[40px] font-black leading-[1.06] tracking-[-0.04em] text-[#152540] md:text-[58px] xl:text-[68px]">
                 探索学术文献的无限可能
               </h1>
-              <p className="mx-auto mt-3 max-w-[620px] text-[15px] font-semibold leading-7 text-[#6e84a4] md:text-base">
+              <p className="mx-auto mt-4 max-w-[760px] text-[17px] font-semibold leading-8 text-[#6e84a4] md:text-[19px]">
                 高效检索中英文权威文献，快速沉淀研究方向、论文写作与项目成果依据。
               </p>
             </div>
 
-            <div className="mt-6 w-full max-w-[960px]">
+            <div className="mt-7 w-full max-w-[1120px]">
               <SearchComposer
                 query={query}
                 mode={mode}
@@ -1091,22 +1091,22 @@ function HomeHero({
               />
             </div>
 
-            <div className="mt-5 flex flex-wrap items-center justify-center gap-2.5 text-sm font-bold text-[#6e84a4]">
+            <div className="mt-7 flex flex-wrap items-center justify-center gap-3.5 text-base font-bold text-[#6e84a4]">
               <span className="mr-1">热门搜索：</span>
               {SUGGESTIONS.map((suggestion) => (
                 <button
                   key={suggestion}
                   type="button"
                   onClick={() => onPickSuggestion(suggestion)}
-                  className="rounded-full border border-[#d8e3f2] bg-white/78 px-3.5 py-2 text-[13px] font-bold text-[#6980a3] shadow-[0_8px_22px_rgba(47,126,247,0.05)] transition-colors hover:border-[#cfe0ff] hover:bg-[#edf5ff] hover:text-[#1e67da]"
+                  className="rounded-full border border-[#d8e3f2] bg-white/78 px-5 py-3 text-[15px] font-bold text-[#6980a3] shadow-[0_8px_22px_rgba(47,126,247,0.05)] transition-colors hover:border-[#cfe0ff] hover:bg-[#edf5ff] hover:text-[#1e67da]"
                 >
                   {suggestion}
                 </button>
               ))}
             </div>
 
-            <div className="mt-auto w-full pb-5">
-              <div className="grid w-full grid-cols-2 gap-4 text-left lg:grid-cols-4">
+            <div className="mt-[10vh] w-full pb-6 xl:mt-[11vh]">
+              <div className="grid w-full grid-cols-2 gap-6 text-left lg:grid-cols-4">
                 <HomeFeatureCard icon={<IconGlobe />} title="海量资源" desc="覆盖中文库、开放学术库与高质量外文来源。" />
                 <HomeFeatureCard icon={<IconSearch />} title="精准检索" desc="支持关键词、语种、模式和权威标签筛选。" />
                 <HomeFeatureCard icon={<IconFilter />} title="质量筛选" desc="优先展示可核验来源、开放获取与高相关文献。" />
@@ -1131,13 +1131,13 @@ function HomeHero({
 
 function HomeFeatureCard({ icon, title, desc }: { icon: React.ReactNode; title: string; desc: string }) {
   return (
-    <article className="grid grid-cols-[42px_minmax(0,1fr)] gap-3">
-      <span className="grid h-[42px] w-[42px] place-items-center rounded-[14px] bg-white/82 text-[#307cf6] shadow-[0_12px_26px_rgba(47,126,247,0.07)]">
+    <article className="grid grid-cols-[54px_minmax(0,1fr)] gap-4">
+      <span className="grid h-[54px] w-[54px] place-items-center rounded-[17px] bg-white/82 text-[#307cf6] shadow-[0_12px_26px_rgba(47,126,247,0.07)]">
         {icon}
       </span>
       <span>
-        <strong className="block text-[15px] leading-5 text-[#152540]">{title}</strong>
-        <span className="mt-1 block text-xs font-semibold leading-5 text-[#6e84a4]">{desc}</span>
+        <strong className="block text-[18px] leading-7 text-[#152540]">{title}</strong>
+        <span className="mt-1 block text-sm font-semibold leading-6 text-[#6e84a4]">{desc}</span>
       </span>
     </article>
   );
@@ -1145,9 +1145,9 @@ function HomeFeatureCard({ icon, title, desc }: { icon: React.ReactNode; title: 
 
 function HomeMetric({ value, label }: { value: string; label: string }) {
   return (
-    <div className="border-[#dce7f4] px-3 py-4 text-center md:border-l md:first:border-l-0">
-      <strong className="block text-[22px] font-black tracking-[-0.03em] text-[#307cf6]">{value}</strong>
-      <span className="mt-1 block text-xs font-bold text-[#6e84a4]">{label}</span>
+    <div className="border-[#dce7f4] px-3 py-5 text-center md:border-l md:first:border-l-0">
+      <strong className="block text-[30px] font-black tracking-[-0.03em] text-[#307cf6]">{value}</strong>
+      <span className="mt-1.5 block text-sm font-bold text-[#6e84a4]">{label}</span>
     </div>
   );
 }
@@ -1578,7 +1578,7 @@ function ResearchAnswer({
 
           <h2 className="mt-8 text-2xl font-black tracking-[-0.03em] text-[#101318]">下一步建议</h2>
           <p className="text-[16px] leading-8 text-[#1d2630]">
-            你可以在底部继续追问更具体的问题，或打开右侧 References 查看每篇文献的摘要、作者、期刊与链接后，再进入学术对话做深度分析。
+            你可以在底部继续追问更具体的问题，或打开右侧 References 查看每篇文献的摘要、作者、期刊与链接后，再围绕本次检索结果继续分析。
           </p>
         </article>
       </div>
@@ -1949,8 +1949,8 @@ function SearchComposer({
   if (isHero) {
     return (
       <form onSubmit={handleSubmit} className="relative">
-        <div className="grid min-h-[68px] grid-cols-1 items-center rounded-[22px] border border-[#d3e0f4] bg-white/88 p-2 shadow-[0_22px_62px_rgba(43,95,173,0.16)] backdrop-blur md:grid-cols-[minmax(0,1fr)_128px_98px_112px]">
-          <label className="flex min-w-0 items-center gap-3 px-4 py-2 text-left">
+        <div className="grid min-h-[80px] grid-cols-1 items-center rounded-[24px] border border-[#d3e0f4] bg-white/88 p-2.5 shadow-[0_22px_62px_rgba(43,95,173,0.16)] backdrop-blur md:grid-cols-[minmax(0,1fr)_144px_112px_128px]">
+          <label className="flex min-w-0 items-center gap-3.5 px-5 py-2 text-left">
             <span className="shrink-0 text-[#7a91b3]">
               <IconSearch />
             </span>
@@ -1958,14 +1958,14 @@ function SearchComposer({
               value={query}
               onChange={(event) => onQueryChange(event.target.value)}
               placeholder="搜索论文标题、关键词、作者或 DOI"
-              className="h-11 w-full min-w-0 bg-transparent text-[15px] font-semibold text-[#152540] outline-none placeholder:text-[#9cafc9]"
+              className="h-[54px] w-full min-w-0 bg-transparent text-[18px] font-semibold text-[#152540] outline-none placeholder:text-[#9cafc9]"
             />
           </label>
 
           <select
             value={scope}
             onChange={(event) => onScopeChange(event.target.value as LibraryScope)}
-            className="mx-2 h-11 rounded-[13px] border border-[#d9e5f5] bg-white px-3 text-sm font-black text-[#152540] outline-none transition-colors hover:border-[#307cf6]"
+            className="mx-2 h-[54px] rounded-[15px] border border-[#d9e5f5] bg-white px-4 text-base font-black text-[#152540] outline-none transition-colors hover:border-[#307cf6]"
           >
             {SCOPE_OPTIONS.map((option) => (
               <option key={option.value} value={option.value}>
@@ -1977,7 +1977,7 @@ function SearchComposer({
           <button
             type="button"
             onClick={onToggleFilters}
-            className={`mx-2 inline-flex h-11 items-center justify-center gap-2 rounded-[13px] border text-sm font-black transition-colors ${
+            className={`mx-2 inline-flex h-[54px] items-center justify-center gap-2 rounded-[15px] border text-base font-black transition-colors ${
               filtersOpen
                 ? "border-[#cfe0ff] bg-[#edf5ff] text-[#1e67da]"
                 : "border-[#d9e5f5] bg-white text-[#152540] hover:border-[#307cf6]"
@@ -1990,7 +1990,7 @@ function SearchComposer({
           <button
             type="submit"
             disabled={!query.trim() || loading}
-            className="mx-2 h-12 rounded-[14px] bg-[linear-gradient(145deg,#428dff_0%,#2f74eb_100%)] text-[16px] font-black text-white shadow-[0_16px_34px_rgba(47,126,247,0.24)] transition-all hover:-translate-y-0.5 disabled:cursor-not-allowed disabled:bg-[#c9d2db] disabled:shadow-none"
+            className="mx-2 h-[56px] rounded-[16px] bg-[linear-gradient(145deg,#428dff_0%,#2f74eb_100%)] text-[19px] font-black text-white shadow-[0_16px_34px_rgba(47,126,247,0.24)] transition-all hover:-translate-y-0.5 disabled:cursor-not-allowed disabled:bg-[#c9d2db] disabled:shadow-none"
           >
             {loading ? <span className="inline-grid place-items-center"><IconLoader /></span> : "搜索"}
           </button>

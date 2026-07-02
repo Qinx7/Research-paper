@@ -7,32 +7,25 @@ from fastapi.responses import HTMLResponse, StreamingResponse
 from sqlalchemy.orm import Session
 
 from ..agents.ppt_agent import ppt_agent
+from ..agents.workflows import run_deck_generation_workflow, run_ppt_generation_workflow
 from ..core.database import get_db
-from ..models.draft import Draft
-from ..models.proposal import Proposal
 from ..models.user import User
-from ..schemas.ppt import GenerateHtmlDeckRequest, GenerateProposalPPTRequest, HtmlDeckArtifactOut, PPTStyleOut
+from ..schemas.ppt import GenerateHtmlDeckRequest, GeneratePPTRequest, HtmlDeckArtifactOut, PPTStyleOut
 from ..services.auth_dependency import get_current_user
 from ..services.generated_artifact_service import (
     can_access_object_key,
     register_generated_file,
     register_task_artifact,
 )
-from ..services.ownership import get_owned_draft, get_owned_proposal
+from ..services.ownership import get_owned_draft
 from ..services.upload_service import get_object_stream
-from ..services.web_deck_render_service import (
-    build_slides_outline_from_draft,
-    build_slides_outline_from_proposal,
-)
-from ..skills import SkillExecutionContext, SkillExecutor, SkillRouter, build_default_skill_registry
+from ..services.web_deck_render_service import build_slides_outline_from_draft
 from ..tasks.ppt_task import generate_ppt_task
 
 router = APIRouter(prefix="/ppt", tags=["ppt"])
 
 STORAGE_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "storage", "generated")
 STORAGE_DIR = os.path.abspath(STORAGE_DIR)
-skill_executor = SkillExecutor(build_default_skill_registry())
-skill_router = SkillRouter(build_default_skill_registry())
 
 
 @router.get("/list")
@@ -61,14 +54,14 @@ def list_ppt_styles(current_user: User = Depends(get_current_user)):
     return ppt_agent.list_styles()
 
 
-@router.post("/proposal")
-def generate_proposal_ppt(
-    payload: GenerateProposalPPTRequest,
+@router.post("/generate")
+def generate_ppt(
+    payload: GeneratePPTRequest,
     async_mode: bool = Query(False, alias="async", description="是否异步生成（Celery 任务）"),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """根据项目设计方案生成开题 PPTX 文件。
+    """根据项目设计方案生成通用 PPTX 文件。
 
     设置 ?async=true 则立即返回 task_id，客户端可轮询 GET /api/tasks/{task_id} 获取结果。
     """
@@ -78,25 +71,18 @@ def generate_proposal_ppt(
             template=payload.template,
             user_id=str(current_user.id),
         )
-        register_task_artifact(db, current_user.id, task.id, "proposal_ppt")
+        register_task_artifact(db, current_user.id, task.id, "project_ppt")
         return {"task_id": task.id, "status": "pending"}
 
     try:
-        style = ppt_agent.resolve_style(payload.template)
-        object_key = ppt_agent.generate(
+        artifact = run_ppt_generation_workflow(
             design=payload.design,
             template=payload.template,
+            user_id=str(current_user.id),
+            record_db=db,
         )
-        register_generated_file(db, current_user.id, object_key, "proposal_ppt")
-        filename = os.path.basename(object_key)
-        return {
-            "success": True,
-            "filename": filename,
-            "download_url": f"/api/ppt/download/{object_key}",
-            "design_fields": len(payload.design),
-            "style_id": style["id"],
-            "style_name": style["name"],
-        }
+        register_generated_file(db, current_user.id, artifact["object_key"], "project_ppt")
+        return artifact
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"PPT 生成失败: {str(e)}")
 
@@ -119,34 +105,18 @@ def generate_html_deck(
                 draft_content=draft.content or {},
             )
             deck_title = payload.deck_title or draft.title
-        elif payload.proposal_id:
-            proposal = get_owned_proposal(payload.proposal_id, current_user, db)
-            slides_outline = build_slides_outline_from_proposal(
-                title=proposal.title,
-                proposal_content=proposal.content or {},
-            )
-            deck_title = payload.deck_title or proposal.title
-
         if not slides_outline:
-            raise HTTPException(status_code=400, detail="必须提供 slides_outline、draft_id 或 proposal_id")
+            raise HTTPException(status_code=400, detail="必须提供 slides_outline 或 draft_id")
 
-        skill_definition = skill_router.resolve(domain="ppt", action="preview_html_deck")
-        result = skill_executor.execute(
-            skill_definition.id,
-            {
-                "deck_title": deck_title,
-                "slides_outline": slides_outline,
-                "theme": payload.theme,
-            },
-            context=SkillExecutionContext(
-                user_id=str(current_user.id),
-                metadata={
-                    "preview_base_url": "/api/ppt/html-deck/preview/",
-                    "download_base_url": "/api/ppt/html-deck/download/",
-                },
-            ),
+        artifact = run_deck_generation_workflow(
+            deck_title=deck_title,
+            slides_outline=slides_outline,
+            theme=payload.theme,
+            user_id=str(current_user.id),
+            project_id=str(getattr(draft, "project_id", "")) if payload.draft_id else None,
+            draft_id=str(payload.draft_id) if payload.draft_id else None,
+            record_db=db,
         )
-        artifact = result.output
         register_generated_file(db, current_user.id, artifact["object_key"], "html_deck")
         return HtmlDeckArtifactOut(**artifact)
     except Exception as e:

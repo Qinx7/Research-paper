@@ -21,9 +21,9 @@ class SkillSystemTests(unittest.TestCase):
             handler=lambda payload, context: {"content": payload["title"]},
         ))
         registry.register(SkillDefinition(
-            id="ppt.defense_render",
-            name="答辩渲染",
-            description="生成答辩 PPT",
+            id="ppt.project_render",
+            name="通用 PPT 渲染",
+            description="生成项目汇报 PPT",
             domain="ppt",
             handler=lambda payload, context: {"filename": "demo.pptx"},
             enabled=False,
@@ -32,7 +32,7 @@ class SkillSystemTests(unittest.TestCase):
         self.assertTrue(registry.has("paper.chapter_draft"))
         self.assertEqual(registry.get("paper.chapter_draft").domain, "paper")
         self.assertEqual([item.id for item in registry.list(domain="paper")], ["paper.chapter_draft"])
-        self.assertEqual([item.id for item in registry.list(enabled_only=False)], ["paper.chapter_draft", "ppt.defense_render"])
+        self.assertEqual([item.id for item in registry.list(enabled_only=False)], ["paper.chapter_draft", "ppt.project_render"])
 
     def test_registry_rejects_duplicate_skill_id(self):
         registry = SkillRegistry()
@@ -74,9 +74,9 @@ class SkillSystemTests(unittest.TestCase):
     def test_executor_rejects_disabled_skill(self):
         registry = SkillRegistry()
         registry.register(SkillDefinition(
-            id="ppt.defense_render",
-            name="答辩渲染",
-            description="生成答辩 PPT",
+            id="ppt.project_render",
+            name="通用 PPT 渲染",
+            description="生成项目汇报 PPT",
             domain="ppt",
             handler=lambda payload, context: {"filename": "demo.pptx"},
             enabled=False,
@@ -84,7 +84,7 @@ class SkillSystemTests(unittest.TestCase):
         executor = SkillExecutor(registry)
 
         with self.assertRaises(SkillDisabledError):
-            executor.execute("ppt.defense_render", {})
+            executor.execute("ppt.project_render", {})
 
     def test_executor_runs_guards_and_raises_validation_error(self):
         def forbid_fake_result(definition, payload, context, output):
